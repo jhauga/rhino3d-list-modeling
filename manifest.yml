@@ -1,0 +1,20 @@
+name: list-modeling
+version: 0.0.0-alpha.1
+authors:
+  - John Haugabook
+description: >
+  Model Rhino geometry from a Markdown list. Each part names its layer, color,
+  orientation, height, width, depth, position and action (extrude, subtract,
+  union, curve); elements combine parts with boolean operations. Run a list
+  from a file, from the dockable panel's embedded editor, or build one step
+  by step on the command line, and generate a list back from selected objects.
+keywords:
+  - modeling
+  - markdown
+  - list
+  - boolean
+  - panel
+  - parametric
+# Resolved against the root of the built package, not the repository. The build
+# copies docs/assets/icon.png next to this manifest before running yak.
+icon: icon.png

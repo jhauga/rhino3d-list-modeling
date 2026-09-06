@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+dist/
+*.yak
+
+# IDE
+.vs/
+*.user
+
+# Local machine helpers (depend on personal batch tools, not portable)
+task.bat
+.tmp/
+*.locked-*
+
+# Oversized or intermediate graphics sources; model.gif is the published copy
+.support/_model.gif
+.support/source-graphics.ae_AME/
+
+# Test output (reports, screenshots, generated lists)
+tests/artifacts/

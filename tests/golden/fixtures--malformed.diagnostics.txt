@@ -1,0 +1,10 @@
+Error (line 14): Cannot read height 'tall'.
+Warning (line 22): Unknown orientation 'sideways'; using top.
+Warning (line 23): Unknown shape 'blob'; using rectangle.
+Warning (line 27): Position needs two values, got '3'; using 0, 0.
+Warning (line 28): Unknown action 'sculpt' ignored.
+Info (line 29): Unknown property 'material' kept but not used.
+Warning (line 1): Unknown element type 'Sculpt'; parts are built as solids.
+Error (line 3): Part 'Missing Depth' is missing: depth.
+Error (line 11): Part 'Unreadable Number' is missing: height.
+Error (line 31): Part 'Negative Depth' has a zero or negative dimension.

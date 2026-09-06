@@ -1,0 +1,97 @@
+[
+ {
+  "bbox": [
+   35.0, 
+   -5.0, 
+   0.0, 
+   45.0, 
+   5.0, 
+   3.0
+  ], 
+  "faces": 3, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Disc", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   114.80380000000000, 
+   -6.0, 
+   0.0, 
+   125.19620000000000, 
+   6.0, 
+   4.0
+  ], 
+  "faces": 8, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Nut", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   197.0, 
+   -3.0, 
+   0.0, 
+   203.0, 
+   3.0, 
+   0.0
+  ], 
+  "closed": true, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Outline", 
+  "type": "Curve"
+ }, 
+ {
+  "bbox": [
+   72.0, 
+   -4.0, 
+   0.0, 
+   88.0, 
+   4.0, 
+   1.0
+  ], 
+  "faces": 3, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Oval", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -10.0, 
+   -5.0, 
+   0.0, 
+   10.0, 
+   5.0, 
+   2.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Plate", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   155.0, 
+   -5.0, 
+   0.0, 
+   165.0, 
+   5.0, 
+   1.0
+  ], 
+  "faces": 10, 
+  "groups": 0, 
+  "layer": "Test_Shapes", 
+  "name": "Stop", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

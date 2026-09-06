@@ -1,0 +1,98 @@
+[
+ {
+  "bbox": [
+   28.0, 
+   -1.0, 
+   -1.0, 
+   32.0, 
+   0.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Back", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   8.0, 
+   -1.0, 
+   -1.0, 
+   12.0, 
+   1.0, 
+   0.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Bottom", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   18.0, 
+   0.0, 
+   -1.0, 
+   22.0, 
+   1.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Front", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -1.0, 
+   48.0, 
+   -1.0, 
+   0.0, 
+   52.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Left", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   0.0, 
+   38.0, 
+   -1.0, 
+   1.0, 
+   42.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Right", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -2.0, 
+   -1.0, 
+   0.0, 
+   2.0, 
+   1.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Orientations", 
+  "name": "Face Top", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

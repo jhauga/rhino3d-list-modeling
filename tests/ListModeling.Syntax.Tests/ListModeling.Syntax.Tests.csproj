@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Matches the plugin's target so the syntax sources compile identically here. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ListModeling.Syntax.Tests</RootNamespace>
+    <AssemblyName>ListModeling.Syntax.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The syntax layer deliberately has no RhinoCommon dependency, so it compiles
+         straight into this test assembly and runs without Rhino installed. Anything
+         under Core/Runtime or Core/Generate does need Rhino and is covered by the
+         in-Rhino suites under tests/rhino instead. -->
+    <Compile Include="..\..\src\ListModeling\Core\Syntax\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Rhino 8 hosts .NET 8 from service release 8.20 on. -->
+    <TargetFramework>net8.0</TargetFramework>
+
+    <!-- Renames the build output ListModeling.dll to ListModeling.rhp so Rhino loads it. -->
+    <TargetExt>.rhp</TargetExt>
+
+    <!-- Emits .deps.json and copies non-framework dependencies next to the output so the
+         plugin resolves its own dependency graph inside Rhino's host process. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+
+    <!-- Assembly metadata and the plugin identity GUID live in Properties/AssemblyInfo.cs.
+         Without this switch the SDK generates duplicate attributes (CS0579). -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+
+    <RootNamespace>ListModeling</RootNamespace>
+    <AssemblyName>ListModeling</AssemblyName>
+    <LangVersion>latest</LangVersion>
+
+    <!-- NU1701: expected for the pinned RhinoCommon package; Rhino supplies the real
+         assemblies at run time. CA1416: System.Drawing.Icon is used only for the panel
+         icon and Rhino provides the implementation on every platform it runs on. -->
+    <NoWarn>NU1701;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compile against RhinoCommon but never copy it to output: Rhino already has it
+         loaded, and a stale copy next to the .rhp shadows Rhino's own at load time. -->
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <!-- Needed only because the panel icon is constructed from an embedded .ico stream. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The panel icon ships inside the assembly. Manifest resource names follow
+         <RootNamespace>.<FolderPath>.<file>, e.g. ListModeling.Resources.ListModeling.ico -->
+    <EmbeddedResource Include="Resources\**\*" />
+  </ItemGroup>
+
+  <!-- A running Rhino keeps the loaded .rhp locked for the life of its process, which
+       fails the final copy of a rebuild (MSB3021/MSB3027). Windows will not delete or
+       overwrite a locked assembly but does allow renaming it, so the previous output is
+       moved aside before every build. The renamed copies cannot be deleted until their
+       Rhino has exited, which is why cleanup of stale ones runs here too. The fresh
+       binary loads on the next Rhino restart. -->
+  <Target Name="SidestepRhinoFileLock" BeforeTargets="BeforeBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <PluginOutput>$(ProjectDir)$(OutputPath)$(AssemblyName).rhp</PluginOutput>
+    </PropertyGroup>
+    <!-- Stale renamed copies delete once their Rhino has exited; ones still held
+         by a running Rhino are skipped silently and cleaned up on a later build. -->
+    <Exec Command="del /f /q &quot;$(PluginOutput).locked-*&quot; 2&gt;nul"
+          IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" />
+    <!-- Deleting a loaded assembly fails; renaming it succeeds, so try delete
+         first and rename only what survives. -->
+    <Exec Command="del /f /q &quot;$(PluginOutput)&quot; 2&gt;nul"
+          Condition="Exists('$(PluginOutput)')"
+          IgnoreExitCode="true" EchoOff="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" />
+    <Move SourceFiles="$(PluginOutput)"
+          DestinationFiles="$(PluginOutput).locked-$([System.DateTime]::Now.Ticks)"
+          Condition="Exists('$(PluginOutput)')"
+          ContinueOnError="true" />
+  </Target>
+
+</Project>

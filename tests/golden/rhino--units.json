@@ -1,0 +1,98 @@
+[
+ {
+  "bbox": [
+   9.5, 
+   -0.5, 
+   0.0, 
+   10.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Centimeters", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   34.0, 
+   -6.0, 
+   0.0, 
+   46.0, 
+   6.0, 
+   12.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Feet", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -0.5, 
+   -0.5, 
+   0.0, 
+   0.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Inches", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   14.5, 
+   -0.5, 
+   0.0, 
+   15.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Meters", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   4.5, 
+   -0.5, 
+   0.0, 
+   5.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Millimeters", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   19.5, 
+   -0.5, 
+   0.0, 
+   20.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Test_Units", 
+  "name": "Cube Model Units", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]
