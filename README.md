@@ -2,11 +2,12 @@
 
 A Rhino 8 plugin that models geometry from a Markdown list. Each part in the
 list names its layer, color, orientation, height, width, depth, position and
-action; elements combine parts with boolean operations. Write the list in a
-file or in the plugin's dockable panel, run it, and the parts appear on their
-layers. Select existing objects and the plugin writes the list for you.
+action, and can round its edges or run as a pipe along a curve; elements
+combine parts with boolean operations. Write the list in a file or in the
+plugin's dockable panel, run it, and the parts appear on their layers. Select
+existing objects and the plugin writes the list for you.
 
-Current version: `0.0.0-alpha.1` (see [CHANGELOG.md](CHANGELOG.md)).
+Current version: `0.0.0-alpha.1.1.0` (see [CHANGELOG.md](CHANGELOG.md)).
 
 ![A board with two mount holes modeled from the example list](docs/assets/banner.gif)
 
@@ -127,17 +128,41 @@ See [docs/usage.md](docs/usage.md) for the prompts and panel in detail.
   depth and position map to the axes (`top`, `bottom`, `front`, `back`,
   `right`, `left`).
 - Numbers take an optional unit (`in`, `mm`, `cm`, `m`, `ft`); without one
-  they are in the model's units.
+  they are in the model's units. Any number can be arithmetic, such as
+  `1.25in/2`.
 - `shape` is `rectangle` by default; `circle` and `polygon:N` take a single
   `radius` (which implies a circle on its own), and `ellipse` uses width and
   height as its two radii.
 - `LayerName` is optional everywhere; a part without one is built on the
-  current layer.
-- `actions` is `extrude`, `subtract`, `union` or `curve`.
+  current layer. `Shop::Posts`, `"Shop", "Posts"` and a nested bullet all name
+  a layer inside another.
+- `actions` is how the part is made, `extrude`, `curve` or `pipe`, optionally
+  followed by what its solid does, `subtract` or `union`.
+- `filletEdge` rounds edge loops of an extruded part, one radius per loop or
+  edge by edge.
+- `pipe` builds a tube of a given `radius` along the part named by `curve`;
+  the radius can change along the curve.
 
-The full reference, including the axis table and color formats, is in
-[docs/syntax.md](docs/syntax.md). The complete example is
-[examples/circuit-board.md](examples/circuit-board.md).
+```markdown
+## Post
+
+- shape: circle
+- radius: 1
+- depth: 4
+- filletEdge:
+  - select: 1
+  - radius: .25
+- actions: extrude
+```
+
+The full reference, including the axis table, the fillet edge order and color
+formats, is in [docs/syntax.md](docs/syntax.md). Complete examples are
+[examples/circuit-board.md](examples/circuit-board.md) and
+[examples/filleted-post.md](examples/filleted-post.md).
+
+A longer walk-through of writing a parts list, with small standalone scripts
+that build one in Rhino and in FreeCAD:
+[Model From a Parts List](https://gist.github.com/jhauga/615902a81b4200e557ca62bb8e99f7ea).
 
 ## Scripting
 
@@ -189,10 +214,10 @@ the golden file workflow and the two checks that have to be done by hand.
 ## Roadmap
 
 The long-term goal is publishing to the Rhino package marketplace as
-`list-modeling`. The syntax is built to grow: surface elements (loft, revolve,
-sweep, patch, cap) and tooling actions (fillet, chamfer, blend) are the next
-two expansions, described in [docs/roadmap.md](docs/roadmap.md). Task-level
-work is tracked in [TODO.md](TODO.md).
+`list-modeling`. The syntax is built to grow: fillets and pipes are in, and
+surface elements (loft, revolve, sweep, patch, cap) and the remaining tooling
+(chamfer, blend) come next, as described in [docs/roadmap.md](docs/roadmap.md).
+Task-level work is tracked in [TODO.md](TODO.md).
 
 ## License
 

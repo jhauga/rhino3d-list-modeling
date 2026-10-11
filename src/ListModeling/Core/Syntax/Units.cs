@@ -7,6 +7,8 @@ namespace ListModeling.Core.Syntax
   /// <summary>
   /// Parses "&lt;number&gt;[unit]" values such as ".84in", "10 mm" or "2". A missing unit
   /// resolves to LengthUnit.Model, which the runner maps to the document's model units.
+  /// Anything that is not a single number is tried as arithmetic (".31/2", "2in/2"),
+  /// see <see cref="Arithmetic"/>.
   /// </summary>
   public static class Units
   {
@@ -15,15 +17,24 @@ namespace ListModeling.Core.Syntax
       RegexOptions.Compiled);
 
     public static bool TryParse(string text, out Measure measure, out string unknownUnit)
+      => TryParse(text, out measure, out unknownUnit, out _);
+
+    /// <summary>
+    /// As the three-argument form, and also reports why arithmetic could not be a length
+    /// (mixed units, an area, division by zero). The error is null when the text is
+    /// simply unreadable.
+    /// </summary>
+    public static bool TryParse(string text, out Measure measure, out string unknownUnit, out string error)
     {
       measure = default;
       unknownUnit = null;
+      error = null;
       if (string.IsNullOrWhiteSpace(text))
         return false;
 
       var match = MeasurePattern.Match(text);
       if (!match.Success)
-        return false;
+        return Arithmetic.TryEvaluate(text, out measure, out unknownUnit, out error);
 
       if (!double.TryParse(match.Groups["num"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
         return false;

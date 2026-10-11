@@ -101,6 +101,11 @@ namespace ListModeling.Core.Runtime
       if (capped == null || !capped.IsSolid)
         return null;
 
+      // A polygon profile extrudes into one side face with kinks at the corners. The
+      // document splits it into a face per side when the solid is added, but filleting
+      // happens before that and cannot work on a kinked face, so split it here.
+      capped.Faces.SplitKinkyFaces(Rhino.RhinoMath.DefaultAngleTolerance, true);
+
       // Booleans want outward-facing solids.
       if (capped.SolidOrientation == BrepSolidOrientation.Inward)
         capped.Flip();

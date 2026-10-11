@@ -13,6 +13,7 @@ test cannot reach from inside a running script, plus the routes that prompt.
 - [x] Verify the panel: Submit List, Export, Import, Close Panel, and the editor binding
 - [x] Verify layers, colors, groups, orientations, units and shapes against hand worked numbers
 - [ ] Verify the `Import` route on a millimeter document
+- [ ] Compare the fillet, pipe and groove fixtures by eye with the models in `.support/3d-examples/`
 - [ ] Verify the `Steps` route end to end, including the `Command` and `Input` follow-ups for BooleanDifference
 - [ ] Verify one undo step per run by hand (undo is a no-op inside the test harness)
 - [ ] Verify the three file pickers by hand (Load List, Export, Import)
@@ -29,7 +30,7 @@ Known rough edges observed in the current build.
 - [ ] Rectangles are detected by bounding box only, so a rotated rectangle is written as its enclosing box
 - [ ] Circle parts written with differing height and width warn; `radius` avoids it, a `diameter` form does not exist yet
 - [ ] A `LayerName` on an existing layer never updates that layer's color, even when the list gives one
-- [ ] Nested layer paths (`Parent::Child`) are treated as a flat layer name
+- [x] Nested layer paths (`Parent::Child`) are treated as a flat layer name
 - [ ] RhinoCommon 8.0.23304.9001 restores through the net48 fallback (NU1701 suppressed); evaluate a newer package with a proper net8.0 lib
 
 ## Improvements
@@ -38,6 +39,8 @@ Known rough edges observed in the current build.
 - [ ] Accept `diameter` as an alternative to `radius` for circles
 - [ ] Per-element defaults: properties written directly under a `# Element:` header apply to every part
 - [ ] Accept unit suffixes in the Steps prompts
+- [ ] Steps route: prompts for `filletEdge` blocks and for pipes along a curve
+- [ ] GenerateFromSelection: recognize fillets and pipes instead of writing their outer box
 - [ ] Steps route: option to pick the position in the viewport instead of typing it
 - [ ] Panel: syntax highlighting or at least a monospace theme that follows Rhino's dark mode
 - [ ] Panel: run only the selected text of the embedded list
@@ -47,7 +50,9 @@ Known rough edges observed in the current build.
 ## New Ideas
 
 - [ ] Surface elements: `Loft` from parts at increasing `offset`, then `Revolve`, `Sweep1`, `Sweep2`, `Patch`, `Cap`
-- [ ] Tooling actions: `fillet`, `chamfer`, `blend` with a radius or distance and an edge-selection vocabulary
+- [x] Fillet edges with a loop and edge selection vocabulary (`filletEdge`)
+- [ ] `chamferEdge` and `blendEdge` blocks on the `filletEdge` pattern, with a distance in place of the radius
+- [ ] `select: all` in a `filletEdge` block for every edge of the part
 - [ ] Transform properties: `rotation` about the depth axis, `mirror`
 - [ ] Repeat syntax for patterns (`repeat: 4 along x every 10mm`)
 - [ ] Variables at the top of a list (`$thickness = 3mm`) reused in parts
@@ -77,6 +82,7 @@ The syntax layer has no Rhino dependency and can be tested with plain .NET.
 - [x] Generate-from-selection round trip: build, generate, rebuild, compare bounding boxes
 - [x] Golden baselines for the written form, the diagnostics and the geometry of every fixture
 - [x] UI suite driving the panel by control id, click and keystroke
+- [x] Fixtures, goldens and in-Rhino cases for fillets, pipes, nested layers, arithmetic and action sequences
 
 ### Improve Tests
 

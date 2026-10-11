@@ -5,6 +5,68 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.0-alpha.1.1.0] - 2026-10-11
+
+### Added
+
+- `filletEdge` property: rounds edge loops of an extruded part. `select` picks
+  the loop at the start (`0`) or the end (`1`) of the extrusion, `radius` gives
+  one value per loop or a bracketed list that goes edge by edge, expanding like
+  CSS margins on a four-edge loop. `select: top`, `front` or `right` groups
+  count loops along a world axis instead, and the first select to name an edge
+  wins. Fillets are applied before the element's booleans; a radius Rhino
+  cannot fit produces a warning and keeps the plain solid.
+- `pipe` action with a `curve` property: a round tube along a curve part
+  anywhere in the list, or along a named curve already in the model. The
+  radius is one value or a nested block of stations along the curve, written
+  as curve parameters or as percentages of its length. Open curves get flat
+  ends so every pipe is a closed solid.
+- Action sequences: `actions` is how a part is made (`extrude`, `curve`,
+  `pipe`) followed by what its solid does (`subtract`, `union`), so
+  `pipe, subtract` cuts a groove along a curve.
+- Nested layers, written as `Parent::Child`, as quoted names
+  (`"Parent", "Child"`) or with the child as a nested bullet. Every level is
+  created on demand and only the last takes the layer color.
+- Arithmetic in every numeric value (`+`, `-`, `*`, `/`, parentheses), with a
+  unit after any number or closing parenthesis. Mixed units, areas, ratios and
+  division by zero are reported as errors.
+- `distance` and `length` as names for `depth`.
+- Nested property lines: `filletEdge`, `radius` and `LayerName` read the lines
+  indented under them; under other properties, nested lines read as ordinary
+  properties.
+- Block quotes, thematic breaks and HTML comments that span several lines are
+  skipped without diagnostics.
+- A warning when a pipe's radius is within five times the model's absolute
+  tolerance, where booleans with it tend to fail.
+- A boolean that fails with a pipe cutter around a closed curve is retried with
+  the pipe's seam turned away from the solid's seam. A circle and a cylinder
+  both start on their width axis, so a groove around a round part otherwise
+  meets seam on seam and fails.
+- Unit cases for arithmetic, nested lines, nested layers, fillet blocks, pipes
+  and action sequences; fixtures for each with golden baselines; in-Rhino
+  regression cases that measure fillet radii edge by edge, pipe extents,
+  nested layer placement and the grooved part.
+- Example list `examples/filleted-post.md`.
+
+### Changed
+
+- Lists written by the plugin use `-` bullets.
+- GenerateFromSelection writes a nested layer as its full path.
+- An unreadable number anywhere in a part is an error that skips the part,
+  including optional values such as `offset` and `position`, which were
+  previously built at their default.
+- A role after `extrude` now applies: `extrude, union` merges and
+  `extrude, subtract` cuts. Two words of the same kind produce a warning.
+- Grouped parts inherit a value their container could not read as an error.
+- Extruded polygon profiles are split into one face per side when they are
+  built rather than when they are added to the document, which lets fillets
+  reach every edge. Finished geometry is unchanged.
+
+### Fixed
+
+- A nested layer path (`Parent::Child`) creates and uses the nested layer
+  instead of being read as one flat layer name.
+
 ## [0.0.0-alpha.1] - 2026-09-06
 
 ### Added

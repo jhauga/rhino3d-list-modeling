@@ -48,41 +48,41 @@ namespace ListModeling.Syntax.Tests
     public void WritesASingleRadiusForCircles()
     {
       var written = WriteBack("# Element: Boolean\n\n## Hole\n\n* shape: circle\n* radius: .05in\n* depth: 1in\n");
-      Assert.Contains("* shape: circle", written);
-      Assert.Contains("* radius: 0.05in", written);
-      Assert.DoesNotContain("* width:", written);
-      Assert.DoesNotContain("* height:", written);
+      Assert.Contains("- shape: circle", written);
+      Assert.Contains("- radius: 0.05in", written);
+      Assert.DoesNotContain("- width:", written);
+      Assert.DoesNotContain("- height:", written);
     }
 
     [Fact]
     public void WritesASingleRadiusForPolygons()
     {
       var written = WriteBack("# Element: Boolean\n\n## Nut\n\n* shape: hexagon\n* radius: 4\n* depth: 2\n");
-      Assert.Contains("* shape: polygon:6", written);
-      Assert.Contains("* radius: 4", written);
+      Assert.Contains("- shape: polygon:6", written);
+      Assert.Contains("- radius: 4", written);
     }
 
     [Fact]
     public void WritesBothRadiiForEllipses()
     {
       var written = WriteBack("# Element: Boolean\n\n## Oval\n\n* shape: ellipse\n* height: 3\n* width: 5\n* depth: 1\n");
-      Assert.Contains("* shape: ellipse", written);
-      Assert.Contains("* height: 3", written);
-      Assert.Contains("* width:  5", written);
-      Assert.DoesNotContain("* radius:", written);
+      Assert.Contains("- shape: ellipse", written);
+      Assert.Contains("- height: 3", written);
+      Assert.Contains("- width:  5", written);
+      Assert.DoesNotContain("- radius:", written);
     }
 
     [Fact]
     public void OmitsTheShapeLineForTheRectangleDefault()
-      => Assert.DoesNotContain("* shape:", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions));
+      => Assert.DoesNotContain("- shape:", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions));
 
     [Fact]
     public void OmitsAZeroOffset()
-      => Assert.DoesNotContain("* offset:", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions));
+      => Assert.DoesNotContain("- offset:", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions));
 
     [Fact]
     public void WritesANonZeroOffset()
-      => Assert.Contains("* offset: 12mm", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions + "* offset: 12mm\n"));
+      => Assert.Contains("- offset: 12mm", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions + "* offset: 12mm\n"));
 
     [Fact]
     public void OmitsAnAbsentLayer()
@@ -96,14 +96,14 @@ namespace ListModeling.Syntax.Tests
     public void KeepsUnitsAsTheyWereWritten()
     {
       var written = WriteBack("# Element: Boolean\n\n## Plate\n\n* height: .84in\n* width: 10mm\n* depth: 3\n");
-      Assert.Contains("* height: 0.84in", written);
-      Assert.Contains("* width:  10mm", written);
-      Assert.Contains("* depth:  3", written);
+      Assert.Contains("- height: 0.84in", written);
+      Assert.Contains("- width:  10mm", written);
+      Assert.Contains("- depth:  3", written);
     }
 
     [Fact]
     public void CarriesUnknownPropertiesThrough()
-      => Assert.Contains("* material: aluminium", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions + "* material: aluminium\n"));
+      => Assert.Contains("- material: aluminium", WriteBack("# Element: Boolean\n\n## Plate\n\n" + Dimensions + "* material: aluminium\n"));
 
     [Fact]
     public void WritingIsIdempotent()
@@ -114,6 +114,15 @@ namespace ListModeling.Syntax.Tests
         "## Holes\n\n### group:h\n\n- shape: circle\n- radius: .05in\n- depth: 1in\n- position: .62, -.35\n- actions: subtract\n");
 
       Assert.Equal(once, WriteBack(once));
+    }
+
+    [Fact]
+    public void WritesHyphenBulletsWhateverTheSourceUsed()
+    {
+      var written = WriteBack("# Element: Boolean\n\n## Plate\n\n* LayerName: Deck\n+ height: 1\n* width: 2\n- depth: 3\n");
+      var bullets = written.Replace("\r\n", "\n").Split('\n').Where(l => l.TrimStart().Length > 0 && !l.StartsWith("#")).ToList();
+      Assert.NotEmpty(bullets);
+      Assert.All(bullets, l => Assert.StartsWith("- ", l));
     }
 
     [Fact]

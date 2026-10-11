@@ -1,0 +1,50 @@
+[
+ {
+  "bbox": [
+   399.5, 
+   -0.5, 
+   0.0, 
+   400.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Default", 
+  "name": "Divide", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   409.5, 
+   -0.5, 
+   0.0, 
+   410.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Default", 
+  "name": "Parentheses And Negatives", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   404.5, 
+   -0.5, 
+   0.0, 
+   405.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Default", 
+  "name": "Units Inside", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

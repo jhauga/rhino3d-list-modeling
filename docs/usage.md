@@ -80,16 +80,19 @@ describes them. The model decides the values:
 - A planar cap perpendicular to the depth axis is tested for a circle, an
   ellipse or a regular polygon. Anything else is written as a rectangle.
 - Objects on the same layer share one `# Element: Boolean` block, and the
-  layer name and color are written on every part.
+  layer name and color are written on every part. A nested layer is written as
+  its full path, in the quoted form `"Shop", "Posts"`.
 - Curves become `curve` parts, everything else becomes `extrude` parts.
 
-The generated text is printed to the command line, appended to the embedded
-list, and the panel opens to show it. Values are rounded to four decimals in
-model units.
+The generated text uses `-` bullets. It is printed to the command line,
+appended to the embedded list, and the panel opens to show it. Values are
+rounded to four decimals in model units.
 
 Generation describes each object's outer extent only. Holes and other
 subtracted features are not inferred, so a board with mount holes comes back
-as a plain board; add the `subtract` parts by hand.
+as a plain board; add the `subtract` parts by hand. Fillets and pipes are not
+recognized either: a filleted solid comes back as its plain outline, and a
+pipe as the box around it.
 
 ## The panel
 
@@ -155,8 +158,9 @@ plugin reaches the same object is described in
 ## Undo and layers
 
 Each run is one undo step named after the list source. Layers named in the
-list are created on demand with the given color; existing layers are reused
-and keep their color. Objects carry the part name as their object name, and
+list are created on demand with the given color, and a nested path creates
+every level it needs, coloring only the last. Existing layers are reused and
+keep their color. Objects carry the part name as their object name, and
 grouped parts that survive the run are placed in a Rhino group named after
 the group identifier.
 
@@ -164,9 +168,12 @@ the group identifier.
 
 - Surface element types (`Loft`, `Revolve`, `Sweep1`, `Sweep2`, `Patch`,
   `Cap`) produce profile curves only.
-- Fillet, chamfer and blend tooling is not part of the syntax yet.
+- Chamfer and blend are not part of the syntax yet; fillets are, through
+  `filletEdge`.
 - Profiles are always centered on the position; there is no corner anchoring.
 - A boolean that fails even after the retry leaves the solid and the cutters
   in the document for manual work, with a warning.
-- The Steps route reads dimensions in model units only; unit suffixes are a
-  file feature.
+- The Steps route reads dimensions in model units only; unit suffixes and
+  arithmetic are a file feature.
+- The Steps route does not prompt for fillets or pipes; write those in a list
+  and run it from a file or the panel.

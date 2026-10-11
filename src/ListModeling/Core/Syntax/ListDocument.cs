@@ -10,8 +10,24 @@ namespace ListModeling.Core.Syntax
   /// <summary>Profile drawn before the depth is applied.</summary>
   public enum PartShape { Rectangle, Circle, Ellipse, Polygon }
 
-  /// <summary>What the runner does with a part's profile.</summary>
-  public enum PartAction { Extrude, Subtract, Union, Curve }
+  /// <summary>
+  /// One word of a part's "actions" value. Extrude, Curve and Pipe say how the geometry
+  /// is made; Subtract and Union say what the resulting solid does in its element.
+  /// </summary>
+  public enum PartAction { Extrude, Subtract, Union, Curve, Pipe }
+
+  /// <summary>How a part makes its geometry: the first slot of its actions.</summary>
+  public enum PartGenerator { Extrude, Curve, Pipe }
+
+  /// <summary>What a part's solid does in its element: the second slot of its actions.</summary>
+  public enum PartRole { Keep, Subtract, Union }
+
+  /// <summary>
+  /// The direction fillet loops are counted along. Extrusion follows the part's own depth
+  /// axis (0 is the profile plane, 1 the far end); X, Y and Z count from the lowest
+  /// coordinate on that world axis.
+  /// </summary>
+  public enum FilletAxis { Extrusion, X, Y, Z }
 
   /// <summary>Length unit written after a number. Model means "use the document's units".</summary>
   public enum LengthUnit { Model, Millimeters, Centimeters, Meters, Inches, Feet }
@@ -118,6 +134,70 @@ namespace ListModeling.Core.Syntax
   }
 
   /// <summary>
+  /// One point of a pipe's radius. Parameter is null for a constant radius; otherwise it
+  /// is a parameter on the rail curve, or a percentage of the rail's length when IsPercent.
+  /// </summary>
+  public readonly struct RadiusStation
+  {
+    public RadiusStation(double? parameter, bool isPercent, Measure radius)
+    {
+      Parameter = parameter;
+      IsPercent = isPercent;
+      Radius = radius;
+    }
+
+    public double? Parameter { get; }
+    public bool IsPercent { get; }
+    public Measure Radius { get; }
+  }
+
+  /// <summary>
+  /// One "select" line of a filletEdge block with the radius that goes with it.
+  /// Loops lists the selected loop indices (0 or 1) along Axis. Radii has one entry per
+  /// loop, in the same order: one value fillets the whole loop, several values go edge by
+  /// edge. Fewer entries than loops means the last entry repeats.
+  /// </summary>
+  public sealed class FilletSelection
+  {
+    public FilletSelection(FilletAxis axis, int line)
+    {
+      Axis = axis;
+      Line = line;
+    }
+
+    public FilletAxis Axis { get; }
+    public int Line { get; }
+    public List<int> Loops { get; } = new List<int>();
+    public List<List<Measure>> Radii { get; } = new List<List<Measure>>();
+
+    public FilletSelection Clone()
+    {
+      var copy = new FilletSelection(Axis, Line);
+      copy.Loops.AddRange(Loops);
+      foreach (var entry in Radii)
+        copy.Radii.Add(new List<Measure>(entry));
+      return copy;
+    }
+  }
+
+  /// <summary>
+  /// A part's filletEdge block: selections in the order written. When two selections name
+  /// the same edge, the first one wins.
+  /// </summary>
+  public sealed class FilletSpec
+  {
+    public List<FilletSelection> Selections { get; } = new List<FilletSelection>();
+
+    public FilletSpec Clone()
+    {
+      var copy = new FilletSpec();
+      foreach (var selection in Selections)
+        copy.Selections.Add(selection.Clone());
+      return copy;
+    }
+  }
+
+  /// <summary>
   /// One modeled piece: a level 2 header, or a level 3 "group:" header nested under one.
   /// Every dimension is optional at parse time; the runner reports what is missing.
   /// </summary>
@@ -135,6 +215,7 @@ namespace ListModeling.Core.Syntax
     /// <summary>Group identifier from a "### group:id" header; null when not grouped.</summary>
     public string Group { get; set; }
 
+    /// <summary>Layer name, or a nested layer path joined with "::" (Rhino's separator).</summary>
     public string LayerName { get; set; }
     public string LayerColor { get; set; }
     public Orientation Orientation { get; set; } = Orientation.Top;
@@ -153,6 +234,19 @@ namespace ListModeling.Core.Syntax
     /// <summary>Optional start along the depth axis; the profile is lifted here before extruding.</summary>
     public Measure Offset { get; set; } = new Measure(0, LengthUnit.Model);
 
+    /// <summary>Name of the curve a pipe follows: a curve part in the same list, or a named curve in the model.</summary>
+    public string CurveName { get; set; }
+
+    /// <summary>
+    /// Every radius the list gave this part. A plain "radius: 2" is one station with no
+    /// parameter and also sets Width and Height; a nested block gives one station per line.
+    /// </summary>
+    public List<RadiusStation> RadiusStations { get; } = new List<RadiusStation>();
+
+    /// <summary>The filletEdge block; null when the part has none.</summary>
+    public FilletSpec Fillet { get; set; }
+
+    /// <summary>Action words as written, unknown words left out.</summary>
     public List<PartAction> Actions { get; } = new List<PartAction>();
 
     /// <summary>Keys the parser did not recognize, kept so the writer can round-trip them.</summary>
@@ -175,7 +269,63 @@ namespace ListModeling.Core.Syntax
     /// </summary>
     public bool HasError { get; set; }
 
-    public PartAction PrimaryAction => Actions.Count > 0 ? Actions[0] : PartAction.Extrude;
+    /// <summary>The first of extrude, curve or pipe in the actions; extrude when none is named.</summary>
+    public PartGenerator Generator
+    {
+      get
+      {
+        foreach (var action in Actions)
+        {
+          switch (action)
+          {
+            case PartAction.Extrude: return PartGenerator.Extrude;
+            case PartAction.Curve: return PartGenerator.Curve;
+            case PartAction.Pipe: return PartGenerator.Pipe;
+          }
+        }
+        return PartGenerator.Extrude;
+      }
+    }
+
+    /// <summary>The first of subtract or union in the actions; keep when none is named. A curve always keeps.</summary>
+    public PartRole Role
+    {
+      get
+      {
+        if (Generator == PartGenerator.Curve)
+          return PartRole.Keep;
+        foreach (var action in Actions)
+        {
+          if (action == PartAction.Subtract)
+            return PartRole.Subtract;
+          if (action == PartAction.Union)
+            return PartRole.Union;
+        }
+        return PartRole.Keep;
+      }
+    }
+
+    /// <summary>
+    /// One word summing up the actions: curve or pipe for those generators, otherwise the
+    /// role of the extruded solid (subtract, union), or extrude when it is simply kept.
+    /// </summary>
+    public PartAction PrimaryAction
+    {
+      get
+      {
+        switch (Generator)
+        {
+          case PartGenerator.Curve: return PartAction.Curve;
+          case PartGenerator.Pipe: return PartAction.Pipe;
+        }
+        switch (Role)
+        {
+          case PartRole.Subtract: return PartAction.Subtract;
+          case PartRole.Union: return PartAction.Union;
+          default: return PartAction.Extrude;
+        }
+      }
+    }
 
     public bool HasAction(PartAction action) => Actions.Contains(action);
 

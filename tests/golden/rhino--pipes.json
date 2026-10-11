@@ -1,0 +1,64 @@
+[
+ {
+  "bbox": [
+   2.0, 
+   -1.0, 
+   0.0, 
+   4.0, 
+   1.0, 
+   0.0
+  ], 
+  "closed": true, 
+  "groups": 0, 
+  "layer": "simple", 
+  "name": "Curve 1", 
+  "type": "Curve"
+ }, 
+ {
+  "bbox": [
+   5.5, 
+   -0.5, 
+   0.0, 
+   6.5, 
+   0.5, 
+   0.0
+  ], 
+  "closed": true, 
+  "groups": 0, 
+  "layer": "multiple", 
+  "name": "Curve 2", 
+  "type": "Curve"
+ }, 
+ {
+  "bbox": [
+   5.4119000000000002, 
+   -0.60160000000000002, 
+   -0.125, 
+   6.625, 
+   0.56530000000000002, 
+   0.125
+  ], 
+  "faces": 1, 
+  "groups": 0, 
+  "layer": "multiple", 
+  "name": "pipe-multi-radius", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1.8744000000000001, 
+   -1.1255999999999999, 
+   -0.125, 
+   4.125, 
+   1.1255999999999999, 
+   0.125
+  ], 
+  "faces": 1, 
+  "groups": 0, 
+  "layer": "simple", 
+  "name": "pipe-simple", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

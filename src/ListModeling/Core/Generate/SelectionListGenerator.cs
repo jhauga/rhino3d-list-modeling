@@ -54,7 +54,7 @@ namespace ListModeling.Core.Generate
         var layer = doc.Layers.FindIndex(obj.Attributes.LayerIndex);
         if (layer != null)
         {
-          part.LayerName = layer.Name;
+          part.LayerName = layer.FullPath;
           part.LayerColor = ColorParser.ToDisplayString(layer.Color);
         }
 

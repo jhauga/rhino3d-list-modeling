@@ -46,6 +46,35 @@ tests/
   artifacts/                    reports, screenshots, generated lists (ignored)
 ```
 
+### Fixtures
+
+Every fixture is parsed and written back by the unit suite, and built by the
+regression suite.
+
+| Fixture | What it exercises |
+| --- | --- |
+| `orientations.md` | The axis mapping of every orientation |
+| `units.md` | Unit suffixes converted into the model's units |
+| `shapes.md` | Rectangles, circles, ellipses, polygons and a profile curve |
+| `booleans.md` | Grouped cutters and a union |
+| `malformed.md` | Errors that skip a part next to warnings that do not |
+| `fillets.md` | Fillet loops, per-edge radius lists and face groups |
+| `pipes.md` | Pipes along curve parts, with constant and changing radii |
+| `sequenced-actions.md` | A pipe used as a cutter on a filleted part |
+| `nested-layers.md` | The three ways to write a nested layer |
+| `arithmetic.md` | Arithmetic and units inside values |
+
+The Rhino models in `.support/3d-examples/` were drawn by hand to show what the
+fillet, pipe and groove fixtures should look like. They are references to open
+beside a result and compare by eye, not baselines: their sizes differ slightly
+from the fixture numbers, and no test reads them.
+
+Most cases run at the inch template's absolute tolerance of 0.01. The grooved
+part in `sequenced-actions.md` is cut by a pipe only 0.01 thick, so its case
+switches the document to 0.001 for the run and restores the tolerance afterward.
+A separate case checks that a pipe this close to the tolerance warns when it is
+built at 0.01.
+
 ## Why the in-Rhino suites are written this way
 
 RhinoCommon only exists inside a running Rhino, so anything touching the runner,

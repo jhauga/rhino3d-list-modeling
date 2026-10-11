@@ -1,0 +1,33 @@
+[
+ {
+  "bbox": [
+   2.8532999999999999, 
+   2.1568999999999998, 
+   0.1328, 
+   3.1533000000000002, 
+   2.4569000000000001, 
+   0.1328
+  ], 
+  "closed": true, 
+  "groups": 0, 
+  "layer": "filletEdge-pipe_subtract", 
+  "name": "Curve_3", 
+  "type": "Curve"
+ }, 
+ {
+  "bbox": [
+   2.8483000000000001, 
+   2.1518999999999999, 
+   0.040000000000000001, 
+   3.1583000000000001, 
+   2.4619000000000000, 
+   0.42999999999999999
+  ], 
+  "faces": 7, 
+  "groups": 0, 
+  "layer": "filletEdge-pipe_subtract", 
+  "name": "combo_fillet,pipe-subtract", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

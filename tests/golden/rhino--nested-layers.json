@@ -1,0 +1,50 @@
+[
+ {
+  "bbox": [
+   309.0, 
+   -1.0, 
+   0.0, 
+   311.0, 
+   1.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Child", 
+  "name": "Bullet Form", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   299.0, 
+   -1.0, 
+   0.0, 
+   301.0, 
+   1.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Child", 
+  "name": "Path Form", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   304.0, 
+   -1.0, 
+   0.0, 
+   306.0, 
+   1.0, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "Child", 
+  "name": "Quoted Form", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

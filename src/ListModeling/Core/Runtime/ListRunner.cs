@@ -13,11 +13,14 @@ namespace ListModeling.Core.Runtime
   /// <summary>
   /// Turns a parsed list into document objects. One undo record per run.
   ///
-  /// Per element:
-  ///   extrude parts become solids, union parts are merged into them, subtract parts are
-  ///   cut out of every solid, and curve parts add only their profile. Surface element
-  ///   types (Loft, Revolve, ...) are planned; for now they produce the profile curves so
-  ///   the surface step can be finished by hand.
+  /// Every curve part in the list is built first, so a pipe can follow a curve that is
+  /// written anywhere in the list. Then, per element:
+  ///   each part is made by its generator (an extruded profile, a profile curve, or a
+  ///   pipe along a curve), fillets are applied to extruded solids while their edges
+  ///   are still the ones the list describes, and each solid then plays its role: kept,
+  ///   merged into the kept solids (union), or cut out of every one of them (subtract).
+  ///   Surface element types (Loft, Revolve, ...) are planned; for now they produce the
+  ///   profile curves so the surface step can be finished by hand.
   /// </summary>
   public sealed class ListRunner
   {
@@ -73,6 +76,7 @@ namespace ListModeling.Core.Runtime
       var groups = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
       try
       {
+        BuildCurvesFirst(list, report);
         foreach (var element in list.Elements)
           RunElement(element, report, groups);
 
@@ -102,6 +106,54 @@ namespace ListModeling.Core.Runtime
       public Curve Profile;
       public Brep Solid;
       public int LayerIndex;
+      /// <summary>True for a plain extrusion, which the boolean retry can rebuild slightly longer.</summary>
+      public bool CanExtend;
+      /// <summary>The curve a pipe follows, which the boolean retry can rebuild it around.</summary>
+      public Curve Rail;
+    }
+
+    /// <summary>
+    /// How far around a closed rail the boolean retry moves a pipe's seam: well away from
+    /// the quarter points, where circles and cylinders put theirs.
+    /// </summary>
+    const double RetrySeamTurn = 0.37;
+
+    /// <summary>Curve parts built ahead of their element, by part. A null value means the build failed.</summary>
+    readonly Dictionary<Part, Built> _prebuilt = new Dictionary<Part, Built>();
+
+    /// <summary>Profiles of curve parts by part name, for pipes to follow.</summary>
+    readonly Dictionary<string, Curve> _rails = new Dictionary<string, Curve>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>True when a part's output is its profile curve rather than a solid.</summary>
+    static bool MakesCurve(Part part, ElementFamily family)
+      => part.Generator == PartGenerator.Curve
+      || (family == ElementFamily.Surface && part.Generator == PartGenerator.Extrude);
+
+    /// <summary>
+    /// Builds every curve part in the list before any element runs, so a pipe can name a
+    /// curve that is written after it or in another element. The curves are still added
+    /// to the document by their own element, in list order.
+    /// </summary>
+    void BuildCurvesFirst(ListDocument list, RunReport report)
+    {
+      foreach (var element in list.Elements)
+      {
+        foreach (var part in element.Parts)
+        {
+          if (!MakesCurve(part, element.Family) || _prebuilt.ContainsKey(part))
+            continue;
+          var built = BuildPart(part, element.Family, report);
+          _prebuilt[part] = built;
+          if (built?.Profile == null)
+            continue;
+
+          var key = part.Name.Trim();
+          if (_rails.ContainsKey(key))
+            report.Messages.Add($"Part '{part.DisplayName}' (line {part.Line}): another curve part is already named '{key}'; pipes follow the first one.");
+          else
+            _rails[key] = built.Profile;
+        }
+      }
     }
 
     void RunElement(Element element, RunReport report, Dictionary<string, List<Guid>> groups)
@@ -116,11 +168,11 @@ namespace ListModeling.Core.Runtime
 
       foreach (var part in element.Parts)
       {
-        var built = BuildPart(part, report);
+        var built = _prebuilt.TryGetValue(part, out var early) ? early : BuildPart(part, family, report);
         if (built == null)
           continue;
 
-        if (family == ElementFamily.Surface || part.PrimaryAction == PartAction.Curve)
+        if (MakesCurve(part, family))
         {
           AddCurve(built, report, groups);
           continue;
@@ -132,10 +184,10 @@ namespace ListModeling.Core.Runtime
           continue;
         }
 
-        switch (part.PrimaryAction)
+        switch (part.Role)
         {
-          case PartAction.Subtract: cutters.Add(built); break;
-          case PartAction.Union: unions.Add(built); break;
+          case PartRole.Subtract: cutters.Add(built); break;
+          case PartRole.Union: unions.Add(built); break;
           default: bases.Add(built); break;
         }
       }
@@ -185,10 +237,11 @@ namespace ListModeling.Core.Runtime
             var result = Brep.CreateBooleanDifference(new[] { b.Solid }, cutterBreps, _tolerance);
             if (result == null || result.Length == 0)
             {
-              // Coplanar caps make booleans flaky; retry with cutters that overshoot both ends.
-              extended = extended ?? cutters.Select(c => ExtendedCutter(c)).Where(c => c != null).ToList();
-              if (extended.Count == cutters.Count)
-                result = Brep.CreateBooleanDifference(new[] { b.Solid }, extended, _tolerance);
+              // Coplanar caps and coinciding seams make booleans flaky. Retry with extruded
+              // cutters that overshoot both ends and pipes whose seam is turned away; other
+              // cutters take part in the retry as they are.
+              extended = extended ?? cutters.Select(c => RetryCutter(c) ?? c.Solid).ToList();
+              result = Brep.CreateBooleanDifference(new[] { b.Solid }, extended, _tolerance);
             }
 
             if (result == null || result.Length == 0)
@@ -217,7 +270,7 @@ namespace ListModeling.Core.Runtime
 
     // ---- Parts --------------------------------------------------------------
 
-    Built BuildPart(Part part, RunReport report)
+    Built BuildPart(Part part, ElementFamily family, RunReport report)
     {
       // A part the parser flagged as an error cannot be built correctly: a negative
       // depth would extrude the wrong way, a missing one not at all. The error is
@@ -225,10 +278,13 @@ namespace ListModeling.Core.Runtime
       if (part.HasError)
         return null;
 
+      if (part.Generator == PartGenerator.Pipe)
+        return BuildPipe(part, report);
+
       if (!part.Height.HasValue || !part.Width.HasValue)
         return null;
 
-      bool needsDepth = part.PrimaryAction != PartAction.Curve;
+      bool needsDepth = !MakesCurve(part, family);
       if (needsDepth && !part.Depth.HasValue)
         return null;
 
@@ -265,14 +321,104 @@ namespace ListModeling.Core.Runtime
       };
 
       if (needsDepth)
+      {
         built.Solid = PartGeometry.Solid(profile, depthDirection * depth, _tolerance);
+        built.CanExtend = built.Solid != null && part.Fillet == null;
+        if (built.Solid != null && part.Fillet != null)
+        {
+          var frame = new FilletEdges.ExtrusionFrame(plane, depthDirection, depth);
+          built.Solid = FilletEdges.Apply(built.Solid, part.Fillet, frame, ToModel, _tolerance, report, part.DisplayName);
+        }
+      }
 
       return built;
     }
 
-    /// <summary>The same cutter, started slightly before the profile plane and running slightly past the depth.</summary>
-    Brep ExtendedCutter(Built cutter)
+    /// <summary>A pipe around a curve part from this list, or around a named curve already in the model.</summary>
+    Built BuildPipe(Part part, RunReport report)
     {
+      var name = (part.CurveName ?? string.Empty).Trim();
+      var rail = FindRail(name);
+      if (rail == null)
+      {
+        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): no curve named '{name}' in the list or the model; the pipe is skipped.");
+        return null;
+      }
+
+      var solid = PipeBuilder.Build(rail, part.RadiusStations, ToModel, _tolerance, _doc.ModelAngleToleranceRadians,
+        out var problem, out var notice);
+      if (solid == null)
+      {
+        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): {problem}.");
+        return null;
+      }
+
+      // A pipe about as thin as the model tolerance is built, but booleans with it fail
+      // more often than not; say so up front rather than leave the failure unexplained.
+      double thinnest = part.RadiusStations.Min(s => ToModel(s.Radius));
+      if (thinnest < 5 * _tolerance)
+        report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): a radius of {Invariant(thinnest)} is close to the model's absolute tolerance ({Invariant(_tolerance)}); booleans with this pipe may fail. A smaller tolerance in Document Properties helps.");
+
+      if (notice != null)
+      {
+        if (part.Role != PartRole.Keep)
+        {
+          report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): {notice}, so it cannot {part.Role.ToString().ToLowerInvariant()}.");
+          return null;
+        }
+        report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): {notice}; it is added as it is.");
+      }
+
+      return new Built
+      {
+        Part = part,
+        Plane = Plane.WorldXY,
+        DepthDirection = Vector3d.Zero,
+        Solid = solid,
+        LayerIndex = ResolveLayer(part, report),
+        CanExtend = false,
+        Rail = rail,
+      };
+    }
+
+    Curve FindRail(string name)
+    {
+      if (name.Length == 0)
+        return null;
+      if (_rails.TryGetValue(name, out var listed))
+        return listed;
+
+      // A curve drawn by hand in the model, found by its object name.
+      var settings = new ObjectEnumeratorSettings
+      {
+        ObjectTypeFilter = ObjectType.Curve,
+        HiddenObjects = true,
+        LockedObjects = true,
+        DeletedObjects = false,
+      };
+      foreach (var obj in _doc.Objects.GetObjectList(settings))
+      {
+        if (string.Equals((obj.Attributes.Name ?? string.Empty).Trim(), name, StringComparison.OrdinalIgnoreCase) &&
+            obj.Geometry is Curve curve)
+          return curve.DuplicateCurve();
+      }
+      return null;
+    }
+
+    /// <summary>
+    /// A second try at a cutter for a boolean that failed. A plain extrusion starts slightly
+    /// before its profile plane and runs slightly past its depth; a pipe around a closed
+    /// curve is rebuilt with its seam turned away from where it was. Null for any other
+    /// cutter, which is retried as it is.
+    /// </summary>
+    Brep RetryCutter(Built cutter)
+    {
+      if (cutter.Rail != null && cutter.Rail.IsClosed)
+        return PipeBuilder.Build(cutter.Rail, cutter.Part.RadiusStations, ToModel, _tolerance,
+          _doc.ModelAngleToleranceRadians, out _, out _, RetrySeamTurn);
+
+      if (!cutter.CanExtend || cutter.Profile == null)
+        return null;
       double margin = Math.Max(_tolerance * 10, cutter.Depth * 0.001);
       var profile = cutter.Profile.DuplicateCurve();
       profile.Translate(-cutter.DepthDirection * margin);
@@ -291,6 +437,7 @@ namespace ListModeling.Core.Runtime
         Profile = template.Profile,
         Solid = solid,
         LayerIndex = template.LayerIndex,
+        CanExtend = false,
       };
 
     // ---- Document -----------------------------------------------------------
@@ -352,37 +499,77 @@ namespace ListModeling.Core.Runtime
 
     /// <summary>
     /// Layer by name, created on demand with the part's color. A missing or empty name
-    /// means the current layer. An unreadable color falls back to the layer default.
+    /// means the current layer. A "Parent::Child" path finds or creates every level, and
+    /// only the last level takes the color. An unreadable color falls back to the layer
+    /// default.
     /// </summary>
     int ResolveLayer(Part part, RunReport report)
     {
       if (string.IsNullOrWhiteSpace(part.LayerName))
         return _doc.Layers.CurrentLayerIndex;
 
-      var name = part.LayerName.Trim();
-      var found = _doc.Layers.FindName(name);
-      if (found != null)
-        return found.Index;
+      var segments = part.LayerName.Split(new[] { ModelComponent.NamePathSeparator }, StringSplitOptions.RemoveEmptyEntries)
+        .Select(s => s.Trim())
+        .Where(s => s.Length > 0)
+        .ToArray();
+      if (segments.Length == 0)
+        return _doc.Layers.CurrentLayerIndex;
 
-      var layer = new Layer { Name = name };
-      if (!string.IsNullOrWhiteSpace(part.LayerColor))
+      if (segments.Length == 1)
       {
-        if (ColorParser.TryParse(part.LayerColor, out Color color))
-          layer.Color = color;
-        else
-          report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): color '{part.LayerColor}' not recognized; layer uses the default color.");
+        // A plain name matches a layer of that name wherever it sits, as it always has.
+        var found = _doc.Layers.FindName(segments[0]);
+        if (found != null)
+          return found.Index;
+      }
+      else
+      {
+        int existing = _doc.Layers.FindByFullPath(string.Join(ModelComponent.NamePathSeparator, segments), -1);
+        if (existing >= 0)
+          return existing;
       }
 
-      int index = _doc.Layers.Add(layer);
-      if (index < 0)
+      Guid parentId = Guid.Empty;
+      int index = -1;
+      for (int level = 0; level < segments.Length; level++)
       {
-        report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): could not create layer '{name}'; using the current layer.");
-        return _doc.Layers.CurrentLayerIndex;
+        bool last = level == segments.Length - 1;
+        var path = string.Join(ModelComponent.NamePathSeparator, segments.Take(level + 1));
+        if (!(segments.Length == 1 && last))
+        {
+          int atLevel = _doc.Layers.FindByFullPath(path, -1);
+          if (atLevel >= 0)
+          {
+            index = atLevel;
+            parentId = _doc.Layers[atLevel].Id;
+            continue;
+          }
+        }
+
+        var layer = new Layer { Name = segments[level], ParentLayerId = parentId };
+        if (last && !string.IsNullOrWhiteSpace(part.LayerColor))
+        {
+          if (ColorParser.TryParse(part.LayerColor, out Color color))
+            layer.Color = color;
+          else
+            report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): color '{part.LayerColor}' not recognized; layer uses the default color.");
+        }
+
+        index = _doc.Layers.Add(layer);
+        if (index < 0)
+        {
+          report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): could not create layer '{path}'; using the current layer.");
+          return _doc.Layers.CurrentLayerIndex;
+        }
+        parentId = _doc.Layers[index].Id;
       }
       return index;
     }
 
     // ---- Units --------------------------------------------------------------
+
+    static string Invariant(double value)
+      => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
 
     double ToModel(Measure measure)
     {
