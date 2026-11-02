@@ -51,6 +51,15 @@ namespace ListModeling.Core.Syntax
     {
       if (!string.IsNullOrEmpty(part.LayerName))
         Line(sb, 0, "LayerName: " + LayerText(part.LayerName));
+
+      if (part.Generator == PartGenerator.Select)
+      {
+        // A select part is the solids already on its layer; nothing else about it is read.
+        Line(sb, 0, "actions: " + ActionsText(part));
+        WriteExtra(sb, part);
+        return;
+      }
+
       if (!string.IsNullOrEmpty(part.LayerColor))
         Line(sb, 0, "LayerColor: " + part.LayerColor);
       Line(sb, 0, "orientation: " + part.Orientation.ToString().ToLowerInvariant());
@@ -72,6 +81,12 @@ namespace ListModeling.Core.Syntax
           // Circles and polygons have one radius; the parser mirrors it into width and height.
           Line(sb, 0, "radius: " + part.Width.Value);
         }
+        else if (part.Shape == PartShape.Square)
+        {
+          // A square has one side, and the width is the one the runner uses.
+          if (part.Width.HasValue)
+            Line(sb, 0, "width:  " + part.Width.Value);
+        }
         else
         {
           if (part.Height.HasValue)
@@ -79,7 +94,9 @@ namespace ListModeling.Core.Syntax
           if (part.Width.HasValue)
             Line(sb, 0, "width:  " + part.Width.Value);
         }
-        if (part.Depth.HasValue)
+        if (part.DepthThrough)
+          Line(sb, 0, "depth:  through");
+        else if (part.Depth.HasValue)
           Line(sb, 0, "depth:  " + part.Depth.Value);
         Line(sb, 0, "position: " + part.PositionA + ", " + part.PositionB);
         if (part.Offset.Value != 0)
@@ -92,6 +109,11 @@ namespace ListModeling.Core.Syntax
         WriteFillet(sb, part.Fillet);
 
       Line(sb, 0, "actions: " + ActionsText(part));
+      WriteExtra(sb, part);
+    }
+
+    static void WriteExtra(StringBuilder sb, Part part)
+    {
       foreach (var extra in part.Extra)
         Line(sb, 0, extra.Key + ": " + extra.Value);
     }
@@ -175,6 +197,8 @@ namespace ListModeling.Core.Syntax
           return "curve";
         case PartGenerator.Pipe:
           return role == null ? "pipe" : "pipe, " + role;
+        case PartGenerator.Select:
+          return role == null ? "select" : "select, " + role;
         default:
           return role ?? "extrude";
       }
@@ -187,6 +211,7 @@ namespace ListModeling.Core.Syntax
         case PartShape.Circle: return "circle";
         case PartShape.Ellipse: return "ellipse";
         case PartShape.Polygon: return "polygon:" + part.PolygonSides;
+        case PartShape.Square: return "square";
         default: return "rectangle";
       }
     }

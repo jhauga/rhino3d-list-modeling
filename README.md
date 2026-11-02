@@ -3,11 +3,13 @@
 A Rhino 8 plugin that models geometry from a Markdown list. Each part in the
 list names its layer, color, orientation, height, width, depth, position and
 action, and can round its edges or run as a pipe along a curve; elements
-combine parts with boolean operations. Write the list in a file or in the
-plugin's dockable panel, run it, and the parts appear on their layers. Select
-existing objects and the plugin writes the list for you.
+combine parts with boolean operations, and can cut into solids already in the
+model. Values written once on a header reach every part below it. Write the
+list in a file or in the plugin's dockable panel, run it, and the parts appear
+on their layers. Select existing objects and the plugin writes the list for
+you.
 
-Current version: `0.0.0-alpha.1.1.0` (see [CHANGELOG.md](CHANGELOG.md)).
+Current version: `0.0.0-alpha.1.2.0` (see [CHANGELOG.md](CHANGELOG.md)).
 
 ![A board with two mount holes modeled from the example list](docs/assets/banner.gif)
 
@@ -123,21 +125,29 @@ See [docs/usage.md](docs/usage.md) for the prompts and panel in detail.
   `BooleanUnion`, or a planned surface type (`Loft`, `Revolve`, `Sweep1`,
   `Sweep2`).
 - `## <Name>` starts a part; `### group:<id>` nests grouped parts that act as
-  one selection.
+  one selection. Headers nest to any depth, and a header with deeper headers
+  under it is a container whose values every part below it starts from.
+- A header written again reuses it: lines under the repeat change its values,
+  and a bare repeat builds its parts again. `group:<id>[*]` and `group:<id>[n]`
+  build parts of an earlier group again.
 - `orientation` picks the face the profile is drawn on and how height, width,
   depth and position map to the axes (`top`, `bottom`, `front`, `back`,
   `right`, `left`).
 - Numbers take an optional unit (`in`, `mm`, `cm`, `m`, `ft`); without one
   they are in the model's units. Any number can be arithmetic, such as
   `1.25in/2`.
-- `shape` is `rectangle` by default; `circle` and `polygon:N` take a single
-  `radius` (which implies a circle on its own), and `ellipse` uses width and
-  height as its two radii.
+- `shape` is `rectangle` by default; `square` takes one side, `circle` and
+  `polygon:N` take a single `radius` (which implies a circle on its own), and
+  `ellipse` uses width and height as its two radii.
+- `x-position`, `y-position` and `z-position` set one world coordinate whatever
+  the orientation. A negative `depth` extrudes the other way, and
+  `depth: through` cuts through every kept solid of the element.
 - `LayerName` is optional everywhere; a part without one is built on the
   current layer. `Shop::Posts`, `"Shop", "Posts"` and a nested bullet all name
   a layer inside another.
 - `actions` is how the part is made, `extrude`, `curve` or `pipe`, optionally
-  followed by what its solid does, `subtract` or `union`.
+  followed by what its solid does, `subtract` or `union`. `select` takes the
+  solids already on the part's layer and edits them in place.
 - `filletEdge` rounds edge loops of an extruded part, one radius per loop or
   edge by edge.
 - `pipe` builds a tube of a given `radius` along the part named by `curve`;
@@ -157,8 +167,9 @@ See [docs/usage.md](docs/usage.md) for the prompts and panel in detail.
 
 The full reference, including the axis table, the fillet edge order and color
 formats, is in [docs/syntax.md](docs/syntax.md). Complete examples are
-[examples/circuit-board.md](examples/circuit-board.md) and
-[examples/filleted-post.md](examples/filleted-post.md).
+[examples/circuit-board.md](examples/circuit-board.md),
+[examples/filleted-post.md](examples/filleted-post.md) and
+[examples/plate-with-feet.md](examples/plate-with-feet.md).
 
 A longer walk-through of writing a parts list, with small standalone scripts
 that build one in Rhino and in FreeCAD:

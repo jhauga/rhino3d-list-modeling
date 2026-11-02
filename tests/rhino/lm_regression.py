@@ -12,6 +12,7 @@ reviewing the diff.
 """
 
 import Rhino
+import System
 
 import lm_harness as h
 
@@ -149,10 +150,11 @@ def booleans(context):
     h.compare_golden(context, "rhino--booleans.json", added)
 
 
-@SUITE.case("a failed boolean keeps the parts instead of losing them")
-def failed_boolean_keeps_parts(context):
-    # The cutter sits far away from the board, so there is nothing to subtract
-    # and the difference cannot produce a result.
+@SUITE.case("a cutter that reaches no solid stays in the model instead of being lost")
+def cutter_reaching_nothing_is_kept(context):
+    # The cutter sits far away from the board, so there is nothing to subtract. Rhino
+    # fails a difference outright when a cutter misses, so the runner only passes a
+    # solid the cutters that reach it, and warns about a cutter that reaches none.
     text = (
         "# Element: BooleanDifference\n\n"
         "## Lonely Board\n\n"
@@ -169,7 +171,7 @@ def failed_boolean_keeps_parts(context):
     names = sorted([item["name"] for item in added])
     h.equal(names, ["Far Cutter", "Lonely Board"],
             "both the solid and the cutter should remain for manual work")
-    h.contains(context.lm.LastSummary, "boolean difference failed",
+    h.contains(context.lm.LastSummary, "reaches none of the element's kept solids",
                "the summary should explain what happened")
 
 
@@ -602,6 +604,259 @@ def sequenced_actions(context):
     h.compare_golden(context, "rhino--sequenced-actions.json", added)
 
 
+# ---- Global properties, reuse and the new values --------------------------------
+
+BOARD_LAYER = "Sample Module - 5V-12V 2A::Circuit Board::board"
+PAD_LAYER = "Sample Module - 5V-12V 2A::Circuit Board::circuit_connections"
+
+
+def _ensure_layer(context, path):
+    """The layer at a "Parent::Child" path, creating every level that is missing."""
+    parent = System.Guid.Empty
+    index = -1
+    names = path.split("::")
+    for level in range(len(names)):
+        index = context.doc.Layers.FindByFullPath("::".join(names[:level + 1]), -1)
+        if index < 0:
+            layer = Rhino.DocObjects.Layer()
+            layer.Name = names[level]
+            layer.ParentLayerId = parent
+            index = context.doc.Layers.Add(layer)
+        parent = context.doc.Layers[index].Id
+    return index
+
+
+def _add_box(context, layer_index, name, x0, x1, y0, y1, z0, z1):
+    """A closed box drawn the way Rhino's Box command draws it: an extrusion object."""
+    box = Rhino.Geometry.Box(Rhino.Geometry.Plane.WorldXY, Rhino.Geometry.Interval(x0, x1),
+                             Rhino.Geometry.Interval(y0, y1), Rhino.Geometry.Interval(z0, z1))
+    attributes = Rhino.DocObjects.ObjectAttributes()
+    attributes.Name = name
+    attributes.LayerIndex = layer_index
+    return context.doc.Objects.AddExtrusion(Rhino.Geometry.Extrusion.CreateBoxExtrusion(box, True), attributes)
+
+
+def _box_of(brep):
+    box = brep.GetBoundingBox(True)
+    return [box.Min.X, box.Min.Y, box.Min.Z, box.Max.X, box.Max.Y, box.Max.Z]
+
+
+def _center(item):
+    box = item["bbox"]
+    return ((box[0] + box[3]) / 2.0, (box[1] + box[4]) / 2.0, (box[2] + box[5]) / 2.0)
+
+
+def _group_size(context, name):
+    group = context.doc.Groups.FindName(name)
+    return 0 if group is None else len(context.doc.Groups.GroupMembers(group.Index))
+
+
+def _placed(context, ids):
+    """Name, full layer path and rounded bounding box of each object, sorted."""
+    placed = []
+    for object_id in ids:
+        obj = _object(context, object_id)
+        box = [round(v, 4) for v in _box_of(_brep(context, object_id))]
+        placed.append((str(obj.Attributes.Name), _layer_path(context, object_id), [0.0 if v == 0 else v for v in box]))
+    return sorted(placed)
+
+
+@SUITE.case("the global properties case cuts pads into a selected board and builds them again as solids")
+def global_properties_case(context):
+    # The board is drawn first, like a board already in the model. Its pockets are
+    # .004 deep, below the template's .01 tolerance, so the case runs at the .001
+    # tolerance of the model it comes from.
+    board_id = _add_box(context, _ensure_layer(context, BOARD_LAYER), "Test Board", -1, 1, -0.5, 0.5, -0.05, 0.05)
+    previous = context.doc.ModelAbsoluteTolerance
+    context.doc.ModelAbsoluteTolerance = 0.001
+    try:
+        ran, added, ids = _build(context, "global-properties.md")
+    finally:
+        context.doc.ModelAbsoluteTolerance = previous
+
+    summary = context.lm.LastSummary
+    h.ok(ran, "global-properties.md reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "global-properties.md warned: %s" % summary)
+    h.contains(summary, "Objects changed: 1", "the board is edited in place")
+
+    # The board keeps its id, name and layer; the extrusion object becomes a brep.
+    board = h.not_none(_object(context, board_id), "the board keeps its object id")
+    h.equal(str(board.ObjectType), "Brep", "the edited board is a brep object")
+    h.equal(str(board.Attributes.Name), "Test Board", "the board keeps its name")
+    h.equal(_layer_path(context, board_id), BOARD_LAYER, "the board stays on its layer")
+    brep = _brep(context, board_id)
+    h.ok(brep.IsSolid, "the board is a closed solid")
+    h.equal(int(brep.Faces.Count), 50, "board faces: 6 of the box, 5 per pocket, 1 per hole")
+    h.bbox_equal(_box_of(brep), [-1, -0.5, -0.05, 1, 0.5, 0.05], "the pockets stay inside the outline", 1e-4)
+
+    # Pockets .1 square and .004 deep on both faces, a hole of radius .015 through
+    # each pair. The floors must stay at .046 and -.046.
+    for x in (-0.8, 0.8):
+        for y in (-0.35, 0.35):
+            side = 0.03 if x > 0 else -0.03
+            where = " at %s, %s" % (x, y)
+            h.ok(not _inside(brep, x, y, 0.048), "top pocket is cut" + where)
+            h.ok(not _inside(brep, x, y, -0.048), "bottom pocket is cut" + where)
+            h.ok(not _inside(brep, x, y, 0.0), "the pin hole goes through" + where)
+            h.ok(_inside(brep, x + side, y, 0.045), "the top pocket floor stays at .046" + where)
+            h.ok(_inside(brep, x + side, y, 0.0), "the board is solid around the hole" + where)
+            h.ok(_inside(brep, x + side, y, -0.045), "the bottom pocket floor stays at -.046" + where)
+
+    # Second element: the same pads as solids on their own layer, a hole through each.
+    h.equal(len(added), 8, "eight pads; the hole cutters are consumed")
+    for object_id in ids:
+        h.equal(_layer_path(context, object_id), PAD_LAYER, "pad layer path")
+    corners = [(-0.8, -0.35), (-0.8, 0.35), (0.8, -0.35), (0.8, 0.35)]
+    for name, low, high in (("Pin Top Connection", 0.046, 0.05), ("Pin Bottom Connection", -0.05, -0.046)):
+        pads = [item for item in added if item["name"] == name]
+        h.equal(sorted([(round(_center(item)[0], 4), round(_center(item)[1], 4)) for item in pads]), corners,
+                name + " centers")
+        for item in pads:
+            h.equal(item["faces"], 7, name + ": a box with one hole")
+            h.ok(item["solid"], name + " is a closed solid")
+            h.close(item["bbox"][2], low, name + " bottom", 1e-4)
+            h.close(item["bbox"][5], high, name + " top", 1e-4)
+    for object_id in ids:
+        pad = _brep(context, object_id)
+        cx, cy, cz = _center({"bbox": _box_of(pad)})
+        h.ok(not _inside(pad, cx, cy, cz), "a hole goes through every pad")
+        h.ok(_inside(pad, cx + 0.03, cy, cz), "the pad is solid around its hole")
+    h.equal(_group_size(context, "pin-top-connections"), 4, "top pads in their Rhino group")
+    h.equal(_group_size(context, "pin-bottom-connections"), 4, "bottom pads in their Rhino group")
+
+    h.compare_golden(context, "rhino--global-properties.json", added + [h.fingerprint(context.doc, board)])
+
+
+@SUITE.case("a solid thinner than about twice the tolerance warns before its boolean")
+def thin_parts_warn(context):
+    text = ("# Element: BooleanDifference\n\n## Plate\n\n- width: 2\n- height: 2\n- depth: .5\n- position: %s, 0\n\n"
+            "## Pocket\n\n- shape: square\n- width: .5\n- depth: -.004\n- position: %s, 0\n- z-position: .5\n"
+            "- actions: subtract\n")
+    previous = context.doc.ModelAbsoluteTolerance
+    try:
+        context.doc.ModelAbsoluteTolerance = 0.01
+        context.lm.RunText(text % (1000, 1000))
+        h.contains(context.lm.LastSummary, "close to the model's absolute tolerance",
+                   "a .004 pocket at a tolerance of .01 should warn")
+        context.doc.ModelAbsoluteTolerance = 0.001
+        context.lm.RunText(text % (1010, 1010))
+        h.ok("close to the model's absolute tolerance" not in context.lm.LastSummary,
+             "a .004 pocket at a tolerance of .001 should not warn: %s" % context.lm.LastSummary)
+    finally:
+        context.doc.ModelAbsoluteTolerance = previous
+
+
+@SUITE.case("x-, y- and z-position place a part on any orientation, and a negative depth turns it around")
+def axis_positions(context):
+    ran, added, ids = _build(context, "axis-positions.md")
+    h.ok(ran, "axis-positions.md reported errors: %s" % context.lm.LastSummary)
+    h.ok("Warnings:" not in context.lm.LastSummary, "axis-positions.md warned: %s" % context.lm.LastSummary)
+    expected = {
+        "Top Lifted":           [599.5, -0.5, 5, 600.5, 0.5, 6],
+        "Bottom Lifted":        [604.5, -0.5, 4, 605.5, 0.5, 5],
+        "Front Pushed":         [609.5, 3, 1.5, 610.5, 4, 2.5],
+        "Back Pushed":          [614.5, 2, 1.5, 615.5, 3, 2.5],
+        "Right Pushed":         [620, -0.5, 1.5, 621, 0.5, 2.5],
+        "Left Pushed":          [624, -0.5, 1.5, 625, 0.5, 2.5],
+        "Negative Depth":       [629.5, -0.5, 0, 630.5, 0.5, 1],
+        "Override By Position": [634.5, -0.5, 2, 635.5, 0.5, 3],
+        "Later Line Wins":      [639.5, -0.5, 4, 640.5, 0.5, 5],
+        "Cleared":              [644.5, -0.5, 0, 645.5, 0.5, 1],
+    }
+    h.equal(sorted([item["name"] for item in added]), sorted(expected.keys()), "one cube per part")
+    for name in sorted(expected.keys()):
+        item = h.by_name(added, name)
+        h.equal(item["faces"], 6, name + " is a box")
+        h.bbox_equal(item["bbox"], expected[name], name, 1e-4)
+    h.compare_golden(context, "rhino--axis-positions.json", added)
+
+
+@SUITE.case("depth: through cuts the full extent of the kept solids along the cutter's axis")
+def through_cuts(context):
+    ran, added, ids = _build(context, "through-cuts.md")
+    h.ok(ran, "through-cuts.md reported errors: %s" % context.lm.LastSummary)
+    h.ok("Warnings:" not in context.lm.LastSummary, "through-cuts.md warned: %s" % context.lm.LastSummary)
+    h.equal(sorted([item["name"] for item in added]), ["Stack Lower", "Stack Upper"], "the cutters are consumed")
+
+    lower = h.by_name(added, "Stack Lower")
+    upper = h.by_name(added, "Stack Upper")
+    h.equal(lower["faces"], 11, "lower plate: box, round hole and a four-wall slot")
+    h.equal(upper["faces"], 7, "upper plate: box and round hole")
+    h.bbox_equal(lower["bbox"], [698, -2, 0, 702, 2, 1], "lower plate", 1e-4)
+    h.bbox_equal(upper["bbox"], [698, -2, 3, 702, 2, 4], "upper plate", 1e-4)
+
+    lower_brep = _brep(context, _id_named(context, ids, "Stack Lower"))
+    upper_brep = _brep(context, _id_named(context, ids, "Stack Upper"))
+    h.ok(not _inside(lower_brep, 700, 0, 0.5), "the round hole goes through the lower plate")
+    h.ok(not _inside(upper_brep, 700, 0, 3.5), "and through the upper plate, whatever its own z")
+    h.ok(not _inside(lower_brep, 701.25, 0, 0.5), "the slot is cut")
+    h.ok(not _inside(lower_brep, 701.25, 1.9, 0.5), "the slot runs the full depth in y")
+    h.ok(_inside(lower_brep, 701.25, 0, 0.9), "the lower plate is solid above the slot")
+    h.ok(_inside(upper_brep, 701.25, 0, 3.5), "the slot misses the upper plate")
+    h.compare_golden(context, "rhino--through-cuts.json", added)
+
+
+@SUITE.case("repeated headers and group references rebuild parts with the values of their new place")
+def references(context):
+    ran, added, ids = _build(context, "references.md")
+    h.ok(ran, "references.md reported errors: %s" % context.lm.LastSummary)
+    h.ok("Warnings:" not in context.lm.LastSummary, "references.md warned: %s" % context.lm.LastSummary)
+
+    first = "Test_References::first"
+    second = "Test_References::second"
+    expected = sorted([
+        ("Block A", first, [799.5, -0.5, 0.0, 800.5, 0.5, 1.0]),
+        ("Corner", first, [804.5, -0.5, 0.0, 805.5, 0.5, 1.0]),
+        ("Corner", first, [804.5, 4.5, 0.0, 805.5, 5.5, 1.0]),
+        ("Corner", first, [804.5, 9.5, 0.0, 805.5, 10.5, 1.0]),
+        ("Peg", first, [809.75, -0.25, 0.0, 810.25, 0.25, 2.0]),
+        # Rebuilt: 2 deep from the update of Blocks, at z 10 and on the second layer
+        # from the element's own defaults, and one corner 2 wide from its site line.
+        ("Block A", second, [799.5, -0.5, 10.0, 800.5, 0.5, 12.0]),
+        ("Corner", second, [804.5, 4.5, 10.0, 805.5, 5.5, 12.0]),
+        ("Peg", second, [809.75, -0.25, 10.0, 810.25, 0.25, 12.0]),
+        ("Corner", second, [804.0, 9.5, 10.0, 806.0, 10.5, 12.0]),
+    ])
+    h.equal(_placed(context, ids), expected, "every part where its values put it")
+    h.compare_golden(context, "rhino--references.json", added)
+
+
+@SUITE.case("a selected solid that a union merges into keeps its object")
+def select_with_union_keeps_the_object(context):
+    plate_id = _add_box(context, _ensure_layer(context, "Test_Select_Union"), "Hand Plate", 898, 902, -2, 2, 0, 1)
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        "# Element: Boolean\n\n## Plate\n\n- LayerName: Test_Select_Union\n- actions: select\n\n"
+        "## Boss\n\n- shape: circle\n- radius: .5\n- depth: 1\n- position: 900, 0\n- z-position: 1\n- actions: union\n")
+    h.ok(ran, "the select and union list reported errors: %s" % context.lm.LastSummary)
+    h.equal(len(context.added_since(before)), 0, "the boss merges into the plate; nothing is added")
+    h.contains(context.lm.LastSummary, "Objects changed: 1", "the plate is edited in place")
+
+    plate = h.not_none(_object(context, plate_id), "the plate keeps its object id")
+    h.equal(str(plate.Attributes.Name), "Hand Plate", "the plate keeps its name")
+    brep = _brep(context, plate_id)
+    h.equal(int(brep.Faces.Count), 8, "box faces with the boss's wall and top")
+    h.bbox_equal(_box_of(brep), [898, -2, 0, 902, 2, 2], "plate and boss together", 1e-4)
+
+
+@SUITE.case("select needs a layer with solids on it, and a through cutter needs something to cut")
+def select_needs_a_layer_with_solids(context):
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        "# Element: Boolean\n\n## Plate\n\n- LayerName: Test_Select_Missing::Layer\n- actions: select\n\n"
+        "## Cut\n\n- radius: .1\n- depth: through\n- position: 0, 0\n- actions: subtract\n")
+    h.ok(not ran, "a missing layer is an error")
+    h.contains(context.lm.LastSummary, "no layer 'Test_Select_Missing::Layer' in the model", "missing layer")
+    h.contains(context.lm.LastSummary, "has no kept solid to go through", "through cutter with nothing to cut")
+    h.equal(context.doc.Layers.FindByFullPath("Test_Select_Missing::Layer", -1), -1, "select never creates a layer")
+
+    _ensure_layer(context, "Test_Select_Empty")
+    ran = context.lm.RunText("# Element: Boolean\n\n## Plate\n\n- LayerName: Test_Select_Empty\n- actions: select\n")
+    h.ok(not ran, "an empty layer is an error")
+    h.contains(context.lm.LastSummary, "no visible, unlocked solid on layer 'Test_Select_Empty'", "empty layer")
+    h.equal(len(context.added_since(before)), 0, "nothing is added")
+
+
 # ---- Shipped examples -----------------------------------------------------------
 
 
@@ -631,3 +886,39 @@ def filleted_post_example(context):
 
     h.equal(_layer_path(context, _id_named(context, ids, "Base Plate")), "Assembly::Parts", "solid layer path")
     h.equal(_layer_path(context, _id_named(context, ids, "Groove Path")), "Assembly::Guides", "guide layer path")
+
+
+@SUITE.case("the plate example cuts pockets, a recess and holes, then builds the feet from the same headers")
+def plate_with_feet_example(context):
+    before = context.object_ids()
+    ran = context.lm.RunText(h.read_text(context.example("plate-with-feet.md")))
+    added = context.added_since(before)
+    ids = context.added_ids_since(before)
+    h.ok(ran, "plate-with-feet.md reported errors: %s" % context.lm.LastSummary)
+    h.ok("Warnings:" not in context.lm.LastSummary, "plate-with-feet.md warned: %s" % context.lm.LastSummary)
+    h.equal(sorted([item["name"] for item in added]), ["Foot Pocket"] * 4 + ["Plate"],
+            "the plate and four feet; every cutter is consumed")
+
+    plate = h.by_name(added, "Plate")
+    h.equal(plate["faces"], 35, "plate: 6 box faces, 4 pockets and the recess of 5, 4 hole walls")
+    h.bbox_equal(plate["bbox"], [-5, -3, 0, 5, 3, 1], "plate outline", 1e-4)
+    plate_id = _id_named(context, ids, "Plate")
+    h.equal(_layer_path(context, plate_id), "Shop::Plate", "plate layer path")
+    brep = _brep(context, plate_id)
+    h.ok(not _inside(brep, 4, 2, 0.1), "a foot pocket is cut into the underside")
+    h.ok(_inside(brep, 4.4, 2, 0.3), "the plate is solid above the pocket, beside the hole")
+    h.ok(not _inside(brep, 4, 2, 0.5), "the screw hole goes through")
+    h.ok(not _inside(brep, 0, 0, 0.95), "the label recess is cut into the top")
+    h.ok(_inside(brep, 0, 0, 0.85), "the recess is .1 deep")
+
+    corners = [(-4.0, -2.0), (-4.0, 2.0), (4.0, -2.0), (4.0, 2.0)]
+    feet = [item for item in added if item["name"] == "Foot Pocket"]
+    h.equal(sorted([(round(_center(item)[0], 4), round(_center(item)[1], 4)) for item in feet]), corners, "feet centers")
+    for item in feet:
+        h.equal(item["faces"], 7, "a foot is a box with one screw hole")
+        h.close(item["bbox"][2], 0.0, "feet stand on z 0", 1e-4)
+        h.close(item["bbox"][5], 0.25, "feet fill the pocket depth", 1e-4)
+    for object_id in ids:
+        if object_id != plate_id:
+            h.equal(_layer_path(context, object_id), "Shop::Feet", "feet layer path")
+    h.equal(_group_size(context, "feet"), 4, "the feet are one Rhino group")

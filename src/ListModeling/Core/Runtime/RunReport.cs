@@ -25,11 +25,18 @@ namespace ListModeling.Core.Runtime
     /// </summary>
     public List<Guid> BaseIds { get; } = new List<Guid>();
 
+    /// <summary>
+    /// Objects that were already in the model and that the run edited in place through a
+    /// select part, or merged into another one and removed.
+    /// </summary>
+    public List<Guid> ModifiedIds { get; } = new List<Guid>();
+
     public List<string> Messages { get; } = new List<string>();
     public List<string> Warnings { get; } = new List<string>();
     public List<string> Errors { get; } = new List<string>();
 
     public int ObjectsAdded => CreatedIds.Count;
+    public int ObjectsModified => ModifiedIds.Count;
     public bool Succeeded => Errors.Count == 0;
 
     public void AddDiagnostics(IEnumerable<Diagnostic> diagnostics)
@@ -47,7 +54,7 @@ namespace ListModeling.Core.Runtime
 
     /// <summary>Short status line for the command history.</summary>
     public string StatusLine()
-      => $"List Modeling: {Source}: {ObjectsAdded} object(s) added, {Warnings.Count} warning(s), {Errors.Count} error(s).";
+      => $"List Modeling: {Source}: {ObjectsAdded} object(s) added{(ObjectsModified > 0 ? $", {ObjectsModified} changed" : "")}, {Warnings.Count} warning(s), {Errors.Count} error(s).";
 
     /// <summary>Multi-line text for the completion popup.</summary>
     public string Summary()
@@ -55,6 +62,8 @@ namespace ListModeling.Core.Runtime
       var sb = new StringBuilder();
       sb.AppendLine($"Source: {Source}");
       sb.AppendLine($"Objects added: {ObjectsAdded}");
+      if (ObjectsModified > 0)
+        sb.AppendLine($"Objects changed: {ObjectsModified}");
       if (Warnings.Count > 0)
       {
         sb.AppendLine();

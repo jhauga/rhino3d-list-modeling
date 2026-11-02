@@ -7,17 +7,23 @@ namespace ListModeling.Core.Syntax
   /// <summary>Which face of the model a part is drawn on. Decides the axis mapping.</summary>
   public enum Orientation { Top, Bottom, Front, Back, Right, Left }
 
-  /// <summary>Profile drawn before the depth is applied.</summary>
-  public enum PartShape { Rectangle, Circle, Ellipse, Polygon }
+  /// <summary>
+  /// Profile drawn before the depth is applied. A square is a rectangle with one side for
+  /// both axes. New members go at the end: the Steps route reads its option index as one.
+  /// </summary>
+  public enum PartShape { Rectangle, Circle, Ellipse, Polygon, Square }
 
   /// <summary>
-  /// One word of a part's "actions" value. Extrude, Curve and Pipe say how the geometry
-  /// is made; Subtract and Union say what the resulting solid does in its element.
+  /// One word of a part's "actions" value. Extrude, Curve, Pipe and Select say how the
+  /// geometry is made; Subtract and Union say what the resulting solid does in its element.
   /// </summary>
-  public enum PartAction { Extrude, Subtract, Union, Curve, Pipe }
+  public enum PartAction { Extrude, Subtract, Union, Curve, Pipe, Select }
 
-  /// <summary>How a part makes its geometry: the first slot of its actions.</summary>
-  public enum PartGenerator { Extrude, Curve, Pipe }
+  /// <summary>
+  /// How a part makes its geometry: the first slot of its actions. Select takes the solids
+  /// already on the part's layer instead of making new ones.
+  /// </summary>
+  public enum PartGenerator { Extrude, Curve, Pipe, Select }
 
   /// <summary>What a part's solid does in its element: the second slot of its actions.</summary>
   public enum PartRole { Keep, Subtract, Union }
@@ -50,6 +56,31 @@ namespace ListModeling.Core.Syntax
   }
 
   /// <summary>A parse or run message tied to a source line (1-based; 0 when not line specific).</summary>
+  /// <summary>
+  /// Which coordinate of a profile a position line writes: one of the two on the
+  /// orientation plane, the one along its depth axis, or a world coordinate that the
+  /// orientation maps onto one of those three.
+  /// </summary>
+  enum CoordinateSlot { PlaneA, PlaneB, Depth, WorldX, WorldY, WorldZ }
+
+  /// <summary>The kind of line that wrote a coordinate, so an empty line drops only its own kind.</summary>
+  enum CoordinateSource { Position, Offset, XPosition, YPosition, ZPosition }
+
+  /// <summary>One coordinate written by one line, in the order the lines were applied.</summary>
+  readonly struct CoordinateWrite
+  {
+    public CoordinateWrite(CoordinateSource source, CoordinateSlot slot, Measure value)
+    {
+      Source = source;
+      Slot = slot;
+      Value = value;
+    }
+
+    public CoordinateSource Source { get; }
+    public CoordinateSlot Slot { get; }
+    public Measure Value { get; }
+  }
+
   public sealed class Diagnostic
   {
     public Diagnostic(DiagnosticLevel level, int line, string message)
@@ -198,8 +229,9 @@ namespace ListModeling.Core.Syntax
   }
 
   /// <summary>
-  /// One modeled piece: a level 2 header, or a level 3 "group:" header nested under one.
-  /// Every dimension is optional at parse time; the runner reports what is missing.
+  /// One modeled piece: a header with no deeper header under it, with the values of every
+  /// header above it already applied. Every dimension is optional at parse time; the
+  /// runner reports what is missing.
   /// </summary>
   public sealed class Part
   {
@@ -215,6 +247,12 @@ namespace ListModeling.Core.Syntax
     /// <summary>Group identifier from a "### group:id" header; null when not grouped.</summary>
     public string Group { get; set; }
 
+    /// <summary>
+    /// For a grouped part built again by a repeated header or a "group:id[n]" reference, its
+    /// place in the group counting from 0; null for a part built where it is written.
+    /// </summary>
+    public int? GroupIndex { get; set; }
+
     /// <summary>Layer name, or a nested layer path joined with "::" (Rhino's separator).</summary>
     public string LayerName { get; set; }
     public string LayerColor { get; set; }
@@ -225,7 +263,13 @@ namespace ListModeling.Core.Syntax
     public int PolygonSides { get; set; } = 6;
     public Measure? Height { get; set; }
     public Measure? Width { get; set; }
+    /// <summary>Extrusion distance along the depth axis; a negative depth extrudes the other way.</summary>
     public Measure? Depth { get; set; }
+    /// <summary>
+    /// True for "depth: through": a cutter that runs through the full extent of the
+    /// element's kept solids along its depth axis. Depth is null then.
+    /// </summary>
+    public bool DepthThrough { get; set; }
 
     /// <summary>First plane coordinate (x for top/bottom/front/back, y for left/right).</summary>
     public Measure PositionA { get; set; } = new Measure(0, LengthUnit.Model);
@@ -233,6 +277,13 @@ namespace ListModeling.Core.Syntax
     public Measure PositionB { get; set; } = new Measure(0, LengthUnit.Model);
     /// <summary>Optional start along the depth axis; the profile is lifted here before extruding.</summary>
     public Measure Offset { get; set; } = new Measure(0, LengthUnit.Model);
+
+    /// <summary>
+    /// Every coordinate the parser read for this part, in order. The orientation can come
+    /// after the coordinates or from a header above, so the parser keeps this log and turns
+    /// it into PositionA, PositionB and Offset once every line is applied.
+    /// </summary>
+    internal List<CoordinateWrite> Coordinates { get; } = new List<CoordinateWrite>();
 
     /// <summary>Name of the curve a pipe follows: a curve part in the same list, or a named curve in the model.</summary>
     public string CurveName { get; set; }
@@ -252,15 +303,8 @@ namespace ListModeling.Core.Syntax
     /// <summary>Keys the parser did not recognize, kept so the writer can round-trip them.</summary>
     public Dictionary<string, string> Extra { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>True once any property line has been applied to this part.</summary>
+    /// <summary>True once any property line has been applied to this part, including lines from the headers above it.</summary>
     public bool HasProperties { get; set; }
-
-    /// <summary>
-    /// True when a deeper header appeared under this one, which makes this header a
-    /// label for the parts nested below rather than a part of its own. Whatever it
-    /// declares becomes the defaults those children start from.
-    /// </summary>
-    public bool IsContainer { get; set; }
 
     /// <summary>
     /// True when this part carries an error diagnostic, which means it cannot be built
@@ -281,6 +325,7 @@ namespace ListModeling.Core.Syntax
             case PartAction.Extrude: return PartGenerator.Extrude;
             case PartAction.Curve: return PartGenerator.Curve;
             case PartAction.Pipe: return PartGenerator.Pipe;
+            case PartAction.Select: return PartGenerator.Select;
           }
         }
         return PartGenerator.Extrude;
@@ -306,8 +351,9 @@ namespace ListModeling.Core.Syntax
     }
 
     /// <summary>
-    /// One word summing up the actions: curve or pipe for those generators, otherwise the
-    /// role of the extruded solid (subtract, union), or extrude when it is simply kept.
+    /// One word summing up the actions: curve, pipe or select for those generators,
+    /// otherwise the role of the extruded solid (subtract, union), or extrude when it is
+    /// simply kept.
     /// </summary>
     public PartAction PrimaryAction
     {
@@ -317,6 +363,7 @@ namespace ListModeling.Core.Syntax
         {
           case PartGenerator.Curve: return PartAction.Curve;
           case PartGenerator.Pipe: return PartAction.Pipe;
+          case PartGenerator.Select: return PartAction.Select;
         }
         switch (Role)
         {
@@ -331,6 +378,42 @@ namespace ListModeling.Core.Syntax
 
     public bool HasAllDimensions => Height.HasValue && Width.HasValue && Depth.HasValue;
 
-    public string DisplayName => string.IsNullOrEmpty(Group) ? Name : $"{Name} [group:{Group}]";
+    public string DisplayName
+      => string.IsNullOrEmpty(Group) ? Name
+      : GroupIndex.HasValue ? $"{Name} [group:{Group}][{GroupIndex.Value}]"
+      : $"{Name} [group:{Group}]";
+
+    /// <summary>A copy that shares nothing with this part, so changing one leaves the other alone.</summary>
+    public Part Clone()
+    {
+      var copy = new Part(Name, Line)
+      {
+        Group = Group,
+        GroupIndex = GroupIndex,
+        LayerName = LayerName,
+        LayerColor = LayerColor,
+        Orientation = Orientation,
+        Shape = Shape,
+        ShapeSet = ShapeSet,
+        PolygonSides = PolygonSides,
+        Height = Height,
+        Width = Width,
+        Depth = Depth,
+        DepthThrough = DepthThrough,
+        PositionA = PositionA,
+        PositionB = PositionB,
+        Offset = Offset,
+        CurveName = CurveName,
+        Fillet = Fillet?.Clone(),
+        HasProperties = HasProperties,
+        HasError = HasError,
+      };
+      copy.RadiusStations.AddRange(RadiusStations);
+      copy.Coordinates.AddRange(Coordinates);
+      copy.Actions.AddRange(Actions);
+      foreach (var pair in Extra)
+        copy.Extra[pair.Key] = pair.Value;
+      return copy;
+    }
   }
 }

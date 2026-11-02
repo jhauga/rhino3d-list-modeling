@@ -91,6 +91,9 @@ namespace ListModeling.Syntax.Tests
       Assert.Contains(errors, d => d.Message.Contains("depth"));
       Assert.Contains(errors, d => d.Message.Contains("Cannot read height"));
       Assert.Contains(errors, d => d.Message.Contains("zero or negative"));
+      Assert.Contains(errors, d => d.Message.Contains("'through' only applies to subtract parts"));
+      Assert.Contains(errors, d => d.Message.Contains("select needs a LayerName"));
+      Assert.Contains(errors, d => d.Message.Contains("No group 'nowhere'"));
 
       // Warnings mean a value was resolved to a default and the part is still built.
       Assert.Contains(warnings, d => d.Message.Contains("two values"));

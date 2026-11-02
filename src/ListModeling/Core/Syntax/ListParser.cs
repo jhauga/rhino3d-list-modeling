@@ -11,10 +11,24 @@ namespace ListModeling.Core.Syntax
   ///
   /// Structure:
   ///   # Element: Type          starts an element (Type is Boolean, BooleanDifference, ...)
-  ///   ## Name                  starts a part
-  ///   ### group:id             starts a grouped part nested under the current part
-  ///   - key: value             a property of the current part ("*" and "+" bullets also work)
+  ///   - key: value             before the first header: a default for every part in the element
+  ///   ## Name                  a header; deeper headers ("###", "####", ...) nest under it
+  ///   ### group:id             a header whose part joins the group with that id
+  ///   - key: value             a property of the header above it ("*" and "+" bullets also work)
   ///     - key: value           a nested line, read by the less indented bullet above it
+  ///
+  /// A header with deeper headers under it is a container: it is never built, and its
+  /// lines are defaults for every header nested below it, at any depth. A header with
+  /// none is a part. A part starts from the element defaults, then applies the lines of
+  /// each header above it, outermost first, then its own, so the nearest line wins. An
+  /// empty value drops what the headers above said about that key.
+  ///
+  /// A header that repeats an earlier name reuses it. A repeated container name continues
+  /// that container: lines under the repeat apply to its parts from there on, and only the
+  /// headers listed under the repeat are built. A repeat with nothing under it builds that
+  /// part, or every part of that container, again. "group:id[*]" and "group:id[n]" build
+  /// parts of an earlier group again. A rebuilt part keeps the values of the headers it was
+  /// first written under; the headers around the repeat fill in only what those leave out.
   ///
   /// filletEdge, radius (pipe stations) and LayerName (nested layers) read their nested
   /// lines. Under any other property, nested lines are applied as ordinary properties,
@@ -34,7 +48,9 @@ namespace ListModeling.Core.Syntax
     static readonly Regex TrailingAnnotation = new Regex(@"\s*\([^()]*\)\s*->.*$", RegexOptions.Compiled);
     static readonly Regex HtmlComment = new Regex(@"<!--.*?-->", RegexOptions.Compiled);
     static readonly Regex QuotedSegment = new Regex("\"([^\"]*)\"", RegexOptions.Compiled);
-    static readonly Regex StationParameter = new Regex(@"^\s*(?<num>[-+]?(?:\d+\.?\d*|\.\d+))\s*(?<percent>%)?\s*$", RegexOptions.Compiled);
+    static readonly Regex GroupPattern = new Regex(@"^\s*group\s*:\s*(?<id>.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    static readonly Regex GroupReferencePattern = new Regex(@"^\s*group\s*:\s*(?<id>[^\[\]]+?)\s*\[(?<sel>[^\]]*)\]\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    static readonly Regex StationParameter =new Regex(@"^\s*(?<num>[-+]?(?:\d+\.?\d*|\.\d+))\s*(?<percent>%)?\s*$", RegexOptions.Compiled);
 
     /// <summary>One bullet line and the bullets nested under it.</summary>
     sealed class Node
@@ -56,6 +72,122 @@ namespace ListModeling.Core.Syntax
       public List<Node> Children { get; } = new List<Node>();
     }
 
+    /// <summary>
+    /// A header where a part or a container was first written, with the lines written under
+    /// it. A later header with the same name may continue it, so its lines can grow.
+    /// </summary>
+    sealed class Definition
+    {
+      public Definition(string name, string group, int line, Definition parent)
+      {
+        Name = name;
+        Group = group;
+        Line = line;
+        Parent = parent;
+      }
+
+      /// <summary>The header text; for a grouped part, the name of the nearest header above it that is not a group.</summary>
+      public string Name { get; }
+      public string Group { get; }
+      public int Line { get; }
+      /// <summary>The definition this one was written under; null at the top of an element.</summary>
+      public Definition Parent { get; }
+      public List<Node> Lines { get; } = new List<Node>();
+      public List<Definition> Children { get; } = new List<Definition>();
+      /// <summary>True once a deeper header was written under it.</summary>
+      public bool IsContainer { get; set; }
+
+      /// <summary>This definition and every one it was written under, outermost first.</summary>
+      public List<Definition> Chain()
+      {
+        var chain = new List<Definition>();
+        for (var level = this; level != null; level = level.Parent)
+          chain.Insert(0, level);
+        return chain;
+      }
+
+      /// <summary>Every part written under this container, at any depth, in the order written.</summary>
+      public IEnumerable<Definition> Parts()
+      {
+        foreach (var child in Children)
+        {
+          if (!child.IsContainer)
+            yield return child;
+          else
+            foreach (var part in child.Parts())
+              yield return part;
+        }
+      }
+    }
+
+    /// <summary>
+    /// What a header does where it is written. Define writes a new definition, or rebuilds an
+    /// earlier part when nothing is written under it. Continue goes on with an earlier
+    /// container. GroupRef rebuilds parts of an earlier group.
+    /// </summary>
+    enum PlaceKind { Define, Continue, GroupRef }
+
+    /// <summary>One header as it appears in the element being read.</summary>
+    sealed class Place
+    {
+      Place(int level, int line, PlaceKind kind, string name)
+      {
+        Level = level;
+        Line = line;
+        Kind = kind;
+        Scratch = new Part(name, line);
+      }
+
+      public static Place Define(int level, int line, Definition definition, Definition earlier)
+        => new Place(level, line, PlaceKind.Define, definition.Name) { Definition = definition, Earlier = earlier };
+
+      public static Place Continue(int level, int line, Definition definition)
+        => new Place(level, line, PlaceKind.Continue, definition.Name) { Definition = definition };
+
+      public static Place Reference(int level, int line, string group, string selector)
+        => new Place(level, line, PlaceKind.GroupRef, group) { Group = group, Selector = selector };
+
+      public int Level { get; }
+      public int Line { get; }
+      public PlaceKind Kind { get; }
+      /// <summary>The definition the lines go to; null for a group reference.</summary>
+      public Definition Definition { get; private set; }
+      /// <summary>Define only: an earlier part of the same name, rebuilt when nothing is written under this header.</summary>
+      public Definition Earlier { get; private set; }
+      /// <summary>GroupRef only: the group id and the text between the brackets.</summary>
+      public string Group { get; private set; }
+      public string Selector { get; private set; }
+      /// <summary>GroupRef only: lines written under the reference, applied after everything else.</summary>
+      public List<Node> SiteLines { get; } = new List<Node>();
+      /// <summary>Where this header's lines go.</summary>
+      public List<Node> Target => Kind == PlaceKind.GroupRef ? SiteLines : Definition.Lines;
+      public int LineCount { get; set; }
+      /// <summary>Define only: true once the definition is registered, which happens when anything is written under it.</summary>
+      public bool Committed { get; set; }
+      /// <summary>Takes every line once as it is read, so each problem is reported once and in order.</summary>
+      public Part Scratch { get; }
+      /// <summary>True once a deeper header appears under this one, which makes it a container.</summary>
+      public bool HasDeeper { get; set; }
+    }
+
+    /// <summary>A part an element will build, with where it came from, until the element ends.</summary>
+    sealed class Candidate
+    {
+      public Candidate(Part part, Definition source, bool isImplicit, bool hasSiteLines)
+      {
+        Part = part;
+        Source = source;
+        IsImplicit = isImplicit;
+        HasSiteLines = hasSiteLines;
+      }
+
+      public Part Part { get; }
+      public Definition Source { get; }
+      /// <summary>Built by repeating a container's name; yields to explicit group references.</summary>
+      public bool IsImplicit { get; }
+      public bool HasSiteLines { get; }
+    }
+
     public static ListDocument Parse(string text)
     {
       var doc = new ListDocument();
@@ -63,21 +195,175 @@ namespace ListModeling.Core.Syntax
         return doc;
 
       Element element = null;
-      Part parentPart = null;   // the current "##" part
-      Part current = null;      // where property lines go
+      var elementDefaults = new List<Node>();
+      Part elementScratch = null;
+      // Headers of the current element that are still open, outermost first.
+      var places = new List<Place>();
+      // What the current element will build, and the groups it references explicitly.
+      var candidates = new List<Candidate>();
+      var referencedGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-      // Top level property lines of the current part wait here until the next line at
-      // their level shows that nothing more is nested under them.
+      // Whole document: the latest definition by header name, and each group's parts in order.
+      var byName = new Dictionary<string, Definition>(StringComparer.Ordinal);
+      var groups = new Dictionary<string, List<Definition>>(StringComparer.OrdinalIgnoreCase);
+
+      // Top level property lines wait here until the next line at their level shows that
+      // nothing more is nested under them.
       var pending = new List<Node>();
       var open = new Stack<Node>();
       bool inHtmlComment = false;
 
+      // A new definition joins the document once anything is written under it, so a bare
+      // repeat of an earlier part rebuilds that part instead of shadowing it.
+      void Commit(Place place)
+      {
+        if (place.Kind != PlaceKind.Define || place.Committed)
+          return;
+        place.Committed = true;
+        var definition = place.Definition;
+        definition.Parent?.Children.Add(definition);
+        if (definition.Group == null)
+          byName[NameKey(definition.Name)] = definition;
+        else
+        {
+          if (!groups.TryGetValue(definition.Group, out var items))
+            groups[definition.Group] = items = new List<Definition>();
+          items.Add(definition);
+        }
+      }
+
       void ApplyPending()
       {
-        foreach (var node in pending)
-          ApplyProperty(current, node, doc.Diagnostics);
+        if (pending.Count > 0)
+        {
+          var place = places.Count > 0 ? places[places.Count - 1] : null;
+          var lines = place != null ? place.Target : elementDefaults;
+          var scratch = place != null ? place.Scratch : elementScratch;
+          foreach (var node in pending)
+          {
+            lines.Add(node);
+            ApplyProperty(scratch, node, doc.Diagnostics, null);
+          }
+          if (place != null)
+          {
+            place.LineCount += pending.Count;
+            Commit(place);
+          }
+        }
         pending.Clear();
         open.Clear();
+      }
+
+      int? GroupIndex(Definition definition)
+        => definition.Group != null && groups.TryGetValue(definition.Group, out var items) ? items.IndexOf(definition) : (int?)null;
+
+      void Build(Definition definition, Place place, bool isImplicit, int? groupIndex)
+        => candidates.Add(new Candidate(
+          Resolve(definition, place, places, elementDefaults, place.SiteLines, groupIndex),
+          definition, isImplicit, place.LineCount > 0 && place.Kind == PlaceKind.GroupRef));
+
+      void BuildReference(Place place)
+      {
+        bool all = place.Selector.Trim() == "*";
+        int index = -1;
+        if (!all && !(int.TryParse(place.Selector.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out index)))
+        {
+          doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, place.Line,
+            $"Cannot read '[{place.Selector}]' after group '{place.Group}'; write [*] or one number, counting from 0."));
+          return;
+        }
+        if (!groups.TryGetValue(place.Group, out var items) || items.Count == 0)
+        {
+          doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, place.Line,
+            $"No group '{place.Group}' is written before line {place.Line}."));
+          return;
+        }
+        if (!all && index >= items.Count)
+        {
+          doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, place.Line,
+            $"Group '{place.Group}' has {items.Count} part{(items.Count == 1 ? "" : "s")} before line {place.Line}, counting from 0; [{index}] is not one of them."));
+          return;
+        }
+
+        referencedGroups.Add(place.Group);
+        if (all)
+          for (int i = 0; i < items.Count; i++)
+            Build(items[i], place, false, i);
+        else
+          Build(items[index], place, false, index);
+      }
+
+      // Closes the open headers at or below a level. A header that closes without a deeper
+      // header under it builds now, from the lines read so far.
+      void CloseFrom(int level)
+      {
+        while (places.Count > 0 && places[places.Count - 1].Level >= level)
+        {
+          var place = places[places.Count - 1];
+          if (!place.HasDeeper)
+          {
+            switch (place.Kind)
+            {
+              case PlaceKind.GroupRef:
+                BuildReference(place);
+                break;
+
+              case PlaceKind.Continue:
+                if (place.LineCount > 0)
+                  doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, place.Line,
+                    $"Header '{place.Definition.Name}' (line {place.Line}) continues the container from line {place.Definition.Line}; its lines apply from here on and nothing is built from it here."));
+                else
+                  foreach (var part in place.Definition.Parts())
+                    Build(part, place, true, GroupIndex(part));
+                break;
+
+              default:
+                if (place.LineCount == 0 && place.Earlier != null)
+                  Build(place.Earlier, place, false, GroupIndex(place.Earlier));
+                else
+                {
+                  Commit(place);
+                  Build(place.Definition, place, false, null);
+                }
+                break;
+            }
+          }
+          places.RemoveAt(places.Count - 1);
+        }
+      }
+
+      // Every header is closed. A rebuilt container leaves out the groups this element
+      // references by name, and each definition is built once per element.
+      void FinishElement()
+      {
+        CloseFrom(0);
+        var first = new Dictionary<Definition, Candidate>();
+        foreach (var candidate in candidates)
+        {
+          if (candidate.IsImplicit && candidate.Source.Group != null && referencedGroups.Contains(candidate.Source.Group))
+            continue;
+          if (!candidate.HasSiteLines)
+          {
+            if (first.TryGetValue(candidate.Source, out var earlier))
+            {
+              doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, candidate.Part.Line,
+                $"'{candidate.Part.DisplayName}' is already built in this element (line {earlier.Part.Line}); the mention on line {candidate.Part.Line} is skipped."));
+              continue;
+            }
+            first[candidate.Source] = candidate;
+          }
+          element.Parts.Add(candidate.Part);
+        }
+        candidates.Clear();
+        referencedGroups.Clear();
+      }
+
+      void StartElement(Element started)
+      {
+        element = started;
+        doc.Elements.Add(element);
+        elementDefaults = new List<Node>();
+        elementScratch = new Part(element.Type, element.Line);
       }
 
       var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
@@ -115,43 +401,54 @@ namespace ListModeling.Core.Syntax
 
           if (level == 1)
           {
-            element = ParseElementHeader(headerText, lineNumber);
-            doc.Elements.Add(element);
-            parentPart = null;
-            current = null;
+            if (element != null)
+              FinishElement();
+            StartElement(ParseElementHeader(headerText, lineNumber));
             continue;
           }
 
           if (element == null)
           {
-            element = new Element("Element", "Boolean", lineNumber);
-            doc.Elements.Add(element);
+            StartElement(new Element("Element", "Boolean", lineNumber));
             doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, lineNumber,
               "No '# Element:' header before the first part; assuming '# Element: Boolean'."));
           }
 
-          if (level == 2)
+          // A header belongs under the nearest open header with fewer "#", which becomes
+          // a container for it. A group reference cannot hold headers.
+          CloseFrom(level);
+          while (places.Count > 0 && places[places.Count - 1].Kind == PlaceKind.GroupRef)
           {
-            parentPart = new Part(headerText, lineNumber);
-            element.Parts.Add(parentPart);
-            current = parentPart;
+            var reference = places[places.Count - 1];
+            doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, lineNumber,
+              $"Header '{headerText}' is nested under the group reference on line {reference.Line}, which cannot hold headers; it is read as if written beside it."));
+            CloseFrom(reference.Level);
+          }
+          var above = places.Count > 0 ? places[places.Count - 1] : null;
+          if (above != null)
+          {
+            above.HasDeeper = true;
+            above.Definition.IsContainer = true;
+            Commit(above);
+          }
+
+          var parent = above?.Definition;
+          if (TryParseGroupHeader(headerText, out var groupId, out var selector))
+          {
+            places.Add(selector != null
+              ? Place.Reference(level, lineNumber, groupId, selector)
+              : Place.Define(level, lineNumber, new Definition(NearestName(parent) ?? headerText, groupId, lineNumber, parent), null));
             continue;
           }
 
-          // Level 3 and deeper: a grouped part under the current "##" part, which
-          // becomes a container for it.
-          if (parentPart != null)
-            parentPart.IsContainer = true;
-          var groupPart = new Part(parentPart != null ? parentPart.Name : headerText, lineNumber);
-          var groupId = ParseGroupId(headerText);
-          if (groupId != null)
-            groupPart.Group = groupId;
-          else
-            groupPart.Name = headerText;
-          if (parentPart != null)
-            InheritDefaults(groupPart, parentPart);
-          element.Parts.Add(groupPart);
-          current = groupPart;
+          // A name written before continues that container, or rebuilds that part when
+          // nothing is written under it. A container that is still open is never continued.
+          byName.TryGetValue(NameKey(headerText), out var earlier);
+          if (earlier != null && places.Any(p => p.Definition == earlier))
+            earlier = null;
+          places.Add(earlier != null && earlier.IsContainer
+            ? Place.Continue(level, lineNumber, earlier)
+            : Place.Define(level, lineNumber, new Definition(headerText, null, lineNumber, parent), earlier));
           continue;
         }
 
@@ -160,11 +457,11 @@ namespace ListModeling.Core.Syntax
         {
           var node = ReadNode(IndentWidth(bullet.Groups["indent"].Value), lineNumber, bullet.Groups["body"].Value);
 
-          if (current == null)
+          if (element == null)
           {
             if (IsPropertyKey(node.Key))
               doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, lineNumber,
-                "Property before any '## Part' header is ignored."));
+                "Property before any '# Element:' header is ignored."));
             else
               doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, lineNumber, "Ignored: " + Truncate(trimmed, 60)));
             continue;
@@ -196,10 +493,61 @@ namespace ListModeling.Core.Syntax
         doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, lineNumber, "Ignored: " + Truncate(trimmed, 60)));
       }
       ApplyPending();
+      if (element != null)
+        FinishElement();
 
-      RemoveContainerParts(doc);
       Validate(doc);
       return doc;
+    }
+
+    /// <summary>How header names are compared: trimmed, case insensitive, runs of spaces as one.</summary>
+    static string NameKey(string name)
+      => Regex.Replace((name ?? string.Empty).Trim(), @"\s+", " ").ToLowerInvariant();
+
+    /// <summary>The name a grouped part takes: that of the nearest header above it that is not a group.</summary>
+    static string NearestName(Definition definition)
+    {
+      for (var level = definition; level != null; level = level.Parent)
+        if (level.Group == null)
+          return level.Name;
+      return null;
+    }
+
+    /// <summary>
+    /// Builds a part by replaying lines. First the context: the element defaults, then the
+    /// headers above the place it is built that it does not descend from. Then its chain:
+    /// the headers it was written under, outermost first, with their lines as they stand
+    /// now, and last the lines written under a group reference. An empty value in the
+    /// chain falls back to what the context said. Problems were reported when the lines
+    /// were read, so the replay only records whether the part has an error.
+    /// </summary>
+    static Part Resolve(Definition definition, Place place, List<Place> openPlaces, List<Node> elementDefaults,
+      List<Node> siteLines, int? groupIndex)
+    {
+      var part = new Part(definition.Name, place.Line) { Group = definition.Group, GroupIndex = groupIndex };
+      var muted = new List<Diagnostic>();
+      var chain = definition.Chain();
+
+      foreach (var node in elementDefaults)
+        ApplyProperty(part, node, muted, null);
+      foreach (var above in openPlaces)
+      {
+        if (above == place)
+          break;
+        if (above.Definition != null && !chain.Contains(above.Definition))
+          foreach (var node in above.Definition.Lines)
+            ApplyProperty(part, node, muted, null);
+      }
+
+      var baseline = part.Clone();
+      foreach (var level in chain)
+        foreach (var node in level.Lines)
+          ApplyProperty(part, node, muted, baseline);
+      foreach (var node in siteLines)
+        ApplyProperty(part, node, muted, baseline);
+
+      ResolveCoordinates(part);
+      return part;
     }
 
     static bool IsComment(string trimmed)
@@ -266,56 +614,54 @@ namespace ListModeling.Core.Syntax
       return new Element("Element", text.Trim(), line);
     }
 
-    static string ParseGroupId(string headerText)
+    /// <summary>
+    /// "group:id" starts a part of that group; "group:id[*]" and "group:id[2]" refer back to
+    /// parts of it written earlier. The selector is the text between the brackets, or null.
+    /// </summary>
+    static bool TryParseGroupHeader(string headerText, out string id, out string selector)
     {
-      var match = Regex.Match(headerText, @"^\s*group\s*:\s*(?<id>.+)$", RegexOptions.IgnoreCase);
-      return match.Success ? match.Groups["id"].Value.Trim() : null;
-    }
-
-    /// <summary>A grouped part starts from the values written directly under its "##" parent.</summary>
-    static void InheritDefaults(Part child, Part parent)
-    {
-      if (!parent.HasProperties)
-        return;
-      child.LayerName = parent.LayerName;
-      child.LayerColor = parent.LayerColor;
-      child.Orientation = parent.Orientation;
-      child.Shape = parent.Shape;
-      child.ShapeSet = parent.ShapeSet;
-      child.PolygonSides = parent.PolygonSides;
-      child.Height = parent.Height;
-      child.Width = parent.Width;
-      child.Depth = parent.Depth;
-      child.PositionA = parent.PositionA;
-      child.PositionB = parent.PositionB;
-      child.Offset = parent.Offset;
-      child.CurveName = parent.CurveName;
-      child.RadiusStations.AddRange(parent.RadiusStations);
-      child.Fillet = parent.Fillet?.Clone();
-      child.Actions.AddRange(parent.Actions);
-      // A value the container could not read is a value every child would build wrong.
-      child.HasError = parent.HasError;
+      id = null;
+      selector = null;
+      var reference = GroupReferencePattern.Match(headerText);
+      if (reference.Success)
+      {
+        id = reference.Groups["id"].Value.Trim();
+        selector = reference.Groups["sel"].Value;
+        return true;
+      }
+      var match = GroupPattern.Match(headerText);
+      if (!match.Success)
+        return false;
+      id = match.Groups["id"].Value.Trim();
+      return true;
     }
 
     // ---- Properties ---------------------------------------------------------------
 
-    static void ApplyProperty(Part part, Node node, List<Diagnostic> diagnostics)
+    /// <summary>
+    /// Applies one property line. An empty value with nothing nested under it puts that
+    /// key back to what the baseline says: the built-in default when baseline is null.
+    /// </summary>
+    static void ApplyProperty(Part part, Node node, List<Diagnostic> diagnostics, Part baseline)
     {
       part.HasProperties = true;
       var key = NormalizeKey(node.Key);
       var value = node.Value;
       int line = node.Line;
 
+      if (value.Length == 0 && node.Children.Count == 0 && ResetProperty(part, key, baseline))
+        return;
+
       switch (key)
       {
         case "layername":
         case "layer":
-          part.LayerName = ReadLayerPath(part, node, diagnostics);
+          part.LayerName = ReadLayerPath(part, node, diagnostics, baseline);
           return;
 
         case "radius":
         case "r":
-          ApplyRadius(part, node, diagnostics);
+          ApplyRadius(part, node, diagnostics, baseline);
           return;
 
         case "filletedge":
@@ -365,13 +711,22 @@ namespace ListModeling.Core.Syntax
         case "thickness":
         case "distance":
         case "length":
-          part.Depth = ParseMeasure(part, value, "depth", line, diagnostics);
+          if (value.Equals("through", StringComparison.OrdinalIgnoreCase))
+          {
+            part.Depth = null;
+            part.DepthThrough = true;
+          }
+          else
+          {
+            part.Depth = ParseMeasure(part, value, "depth", line, diagnostics);
+            part.DepthThrough = false;
+          }
           break;
         case "offset":
         case "elevation":
           var offset = ParseMeasure(part, value, "offset", line, diagnostics);
           if (offset.HasValue)
-            part.Offset = offset.Value;
+            part.Coordinates.Add(new CoordinateWrite(CoordinateSource.Offset, CoordinateSlot.Depth, offset.Value));
           break;
 
         case "position":
@@ -379,6 +734,17 @@ namespace ListModeling.Core.Syntax
         case "center":
         case "centre":
           ApplyPosition(part, value, line, diagnostics);
+          break;
+
+        case "xposition":
+        case "xpos":
+        case "yposition":
+        case "ypos":
+        case "zposition":
+        case "zpos":
+          var world = ParseMeasure(part, value, key[0] + "-position", line, diagnostics);
+          if (world.HasValue)
+            part.Coordinates.Add(WorldWrite(key[0], world.Value));
           break;
 
         case "actions":
@@ -403,18 +769,122 @@ namespace ListModeling.Core.Syntax
 
       // A single-value property has nothing to read from nested lines, so they are applied
       // to the part as if they had been written at the top level.
-      ApplyChildrenAsProperties(part, node.Children, diagnostics);
+      ApplyChildrenAsProperties(part, node.Children, diagnostics, baseline);
     }
 
-    static void ApplyChildrenAsProperties(Part part, IEnumerable<Node> children, List<Diagnostic> diagnostics)
+    static void ApplyChildrenAsProperties(Part part, IEnumerable<Node> children, List<Diagnostic> diagnostics, Part baseline)
     {
       foreach (var child in children)
       {
         if (IsPropertyKey(child.Key))
-          ApplyProperty(part, child, diagnostics);
+          ApplyProperty(part, child, diagnostics, baseline);
         else
           diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, child.Line, "Ignored: " + Truncate(DescribeNode(child), 60)));
       }
+    }
+
+    /// <summary>
+    /// Puts a known key back to the baseline's value (a fresh part when baseline is null).
+    /// Returns false for an unknown key, which is kept as written instead.
+    /// </summary>
+    static bool ResetProperty(Part part, string key, Part baseline)
+    {
+      var from = baseline ?? new Part(part.Name, part.Line);
+      switch (key)
+      {
+        case "layername":
+        case "layer":
+          part.LayerName = from.LayerName;
+          return true;
+        case "layercolor":
+        case "color":
+        case "colour":
+          part.LayerColor = from.LayerColor;
+          return true;
+        case "orientation":
+          part.Orientation = from.Orientation;
+          return true;
+        case "shape":
+        case "sides":
+          part.Shape = from.Shape;
+          part.ShapeSet = from.ShapeSet;
+          part.PolygonSides = from.PolygonSides;
+          return true;
+        case "height":
+          part.Height = from.Height;
+          return true;
+        case "width":
+          part.Width = from.Width;
+          return true;
+        case "depth":
+        case "thickness":
+        case "distance":
+        case "length":
+          part.Depth = from.Depth;
+          part.DepthThrough = from.DepthThrough;
+          return true;
+        case "offset":
+        case "elevation":
+          DropCoordinates(part, CoordinateSource.Offset, baseline);
+          return true;
+        case "position":
+        case "pos":
+        case "center":
+        case "centre":
+          DropCoordinates(part, CoordinateSource.Position, baseline);
+          return true;
+        case "xposition":
+        case "xpos":
+          DropCoordinates(part, CoordinateSource.XPosition, baseline);
+          return true;
+        case "yposition":
+        case "ypos":
+          DropCoordinates(part, CoordinateSource.YPosition, baseline);
+          return true;
+        case "zposition":
+        case "zpos":
+          DropCoordinates(part, CoordinateSource.ZPosition, baseline);
+          return true;
+        case "radius":
+        case "r":
+          part.Width = from.Width;
+          part.Height = from.Height;
+          part.RadiusStations.Clear();
+          part.RadiusStations.AddRange(from.RadiusStations);
+          if (!part.ShapeSet)
+            part.Shape = from.Shape;
+          return true;
+        case "filletedge":
+        case "filletedges":
+        case "fillet":
+        case "fillets":
+          part.Fillet = from.Fillet?.Clone();
+          return true;
+        case "actions":
+        case "action":
+          part.Actions.Clear();
+          part.Actions.AddRange(from.Actions);
+          return true;
+        case "curve":
+        case "rail":
+          part.CurveName = from.CurveName;
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    /// <summary>
+    /// Drops the coordinates one kind of line wrote after the baseline. The baseline's own
+    /// entries are always the start of the log, because the context is applied first, so
+    /// what the context wrote shows through.
+    /// </summary>
+    static void DropCoordinates(Part part, CoordinateSource source, Part baseline)
+    {
+      int keep = baseline?.Coordinates.Count ?? 0;
+      for (int i = part.Coordinates.Count - 1; i >= keep; i--)
+        if (part.Coordinates[i].Source == source)
+          part.Coordinates.RemoveAt(i);
     }
 
     static void FlattenExtra(Part part, string prefix, IEnumerable<Node> children)
@@ -437,7 +907,7 @@ namespace ListModeling.Core.Syntax
     /// Reads "Parent::Child", "\"Parent\", \"Child\"", or a name with the child layer as
     /// a nested bullet, into one "::" path. Nested lines with a key are ordinary properties.
     /// </summary>
-    static string ReadLayerPath(Part part, Node node, List<Diagnostic> diagnostics)
+    static string ReadLayerPath(Part part, Node node, List<Diagnostic> diagnostics, Part baseline)
     {
       var segments = new List<string>();
       AddLayerSegments(segments, node.Value);
@@ -450,7 +920,7 @@ namespace ListModeling.Core.Syntax
         {
           if (child.Key != null)
           {
-            ApplyChildrenAsProperties(part, new[] { child }, diagnostics);
+            ApplyChildrenAsProperties(part, new[] { child }, diagnostics, baseline);
             continue;
           }
           if (next == null)
@@ -498,7 +968,7 @@ namespace ListModeling.Core.Syntax
     /// named), and is also the constant radius of a pipe. A nested block of
     /// "parameter: radius" lines gives a pipe a radius that changes along its curve.
     /// </summary>
-    static void ApplyRadius(Part part, Node node, List<Diagnostic> diagnostics)
+    static void ApplyRadius(Part part, Node node, List<Diagnostic> diagnostics, Part baseline)
     {
       if (node.Value.Length > 0)
       {
@@ -514,7 +984,7 @@ namespace ListModeling.Core.Syntax
         }
         // With a value of its own, radius reads nothing nested, the same as any other
         // single-value property.
-        ApplyChildrenAsProperties(part, node.Children, diagnostics);
+        ApplyChildrenAsProperties(part, node.Children, diagnostics, baseline);
         return;
       }
 
@@ -783,9 +1253,11 @@ namespace ListModeling.Core.Syntax
       {
         case "rectangle":
         case "rect":
-        case "square":
         case "box":
           part.Shape = PartShape.Rectangle;
+          return;
+        case "square":
+          part.Shape = PartShape.Square;
           return;
         case "circle":
         case "round":
@@ -852,15 +1324,59 @@ namespace ListModeling.Core.Syntax
       if (!a.HasValue || !b.HasValue)
         return;
 
-      part.PositionA = a.Value;
-      part.PositionB = b.Value;
+      part.Coordinates.Add(new CoordinateWrite(CoordinateSource.Position, CoordinateSlot.PlaneA, a.Value));
+      part.Coordinates.Add(new CoordinateWrite(CoordinateSource.Position, CoordinateSlot.PlaneB, b.Value));
 
       if (parts.Length > 2)
       {
         var c = ParseMeasure(part, parts[2].Trim(), "offset", line, diagnostics);
         if (c.HasValue)
-          part.Offset = c.Value;
+          part.Coordinates.Add(new CoordinateWrite(CoordinateSource.Position, CoordinateSlot.Depth, c.Value));
       }
+    }
+
+    /// <summary>"x-position: 3" and its y and z forms: one world coordinate, mapped once the orientation is known.</summary>
+    static CoordinateWrite WorldWrite(char axis, Measure value)
+    {
+      switch (axis)
+      {
+        case 'x': return new CoordinateWrite(CoordinateSource.XPosition, CoordinateSlot.WorldX, value);
+        case 'y': return new CoordinateWrite(CoordinateSource.YPosition, CoordinateSlot.WorldY, value);
+        default: return new CoordinateWrite(CoordinateSource.ZPosition, CoordinateSlot.WorldZ, value);
+      }
+    }
+
+    /// <summary>
+    /// Turns the coordinate log into PositionA, PositionB and Offset. Each of the three takes
+    /// the last line that wrote it, whether that line named it on the orientation plane or as
+    /// a world coordinate, so the line nearest the part wins. Unwritten ones are 0.
+    /// </summary>
+    static void ResolveCoordinates(Part part)
+    {
+      var zero = new Measure(0, LengthUnit.Model);
+      Measure a = zero, b = zero, offset = zero;
+      foreach (var write in part.Coordinates)
+      {
+        var slot = write.Slot;
+        var value = write.Value;
+        if (slot == CoordinateSlot.WorldX || slot == CoordinateSlot.WorldY || slot == CoordinateSlot.WorldZ)
+        {
+          var axis = slot == CoordinateSlot.WorldX ? WorldAxis.X : slot == CoordinateSlot.WorldY ? WorldAxis.Y : WorldAxis.Z;
+          slot = AxisMap.SlotFor(part.Orientation, axis, out var factor);
+          if (factor < 0)
+            value = new Measure(0 - value.Value, value.Unit);   // 0 - v keeps a zero from turning into -0
+        }
+
+        switch (slot)
+        {
+          case CoordinateSlot.PlaneA: a = value; break;
+          case CoordinateSlot.PlaneB: b = value; break;
+          default: offset = value; break;
+        }
+      }
+      part.PositionA = a;
+      part.PositionB = b;
+      part.Offset = offset;
     }
 
     /// <summary>
@@ -916,6 +1432,9 @@ namespace ListModeling.Core.Syntax
           case "tube":
             part.Actions.Add(PartAction.Pipe);
             break;
+          case "select":
+            part.Actions.Add(PartAction.Select);
+            break;
           case "surface":
             diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, line,
               "Action 'surface' is planned; the profile curve is created instead."));
@@ -947,7 +1466,7 @@ namespace ListModeling.Core.Syntax
     }
 
     static bool IsGeneratorAction(PartAction action)
-      => action == PartAction.Extrude || action == PartAction.Curve || action == PartAction.Pipe;
+      => action == PartAction.Extrude || action == PartAction.Curve || action == PartAction.Pipe || action == PartAction.Select;
 
     static string ActionWord(PartAction action) => action.ToString().ToLowerInvariant();
 
@@ -969,18 +1488,6 @@ namespace ListModeling.Core.Syntax
 
     // ---- Document checks -------------------------------------------------------------
 
-    /// <summary>
-    /// A header with deeper headers under it labels those parts rather than describing
-    /// one of its own, so it is dropped once its children have inherited what it
-    /// declared. Dimensions on a container are defaults for the children, never a
-    /// request for an extra solid at the container's own position.
-    /// </summary>
-    static void RemoveContainerParts(ListDocument doc)
-    {
-      foreach (var element in doc.Elements)
-        element.Parts.RemoveAll(p => p.IsContainer);
-    }
-
     static void Validate(ListDocument doc)
     {
       foreach (var element in doc.Elements)
@@ -993,20 +1500,24 @@ namespace ListModeling.Core.Syntax
             $"Unknown element type '{element.Type}'; parts are built as solids."));
 
         foreach (var part in element.Parts)
-          ValidatePart(part, doc.Diagnostics);
+          ValidatePart(part, element.Family, doc.Diagnostics);
       }
     }
 
-    static void ValidatePart(Part part, List<Diagnostic> diagnostics)
+    static void ValidatePart(Part part, ElementFamily family, List<Diagnostic> diagnostics)
     {
       if (part.Actions.Count == 0)
         part.Actions.Add(PartAction.Extrude);
 
       var generator = part.Generator;
       var missing = new List<string>();
-      bool nonPositive;
+      bool nonPositive = false;
 
-      if (generator == PartGenerator.Pipe)
+      if (generator == PartGenerator.Select)
+      {
+        ValidateSelect(part, family, diagnostics);
+      }
+      else if (generator == PartGenerator.Pipe)
       {
         // A pipe is its curve and its radius; dimensions and position do not apply.
         if (string.IsNullOrWhiteSpace(part.CurveName)) missing.Add("curve");
@@ -1028,15 +1539,30 @@ namespace ListModeling.Core.Syntax
           }
         }
 
-        if (!part.Height.HasValue) missing.Add("height");
-        if (!part.Width.HasValue) missing.Add("width");
+        if (part.Shape == PartShape.Square)
+        {
+          // A square has one side, so whichever of width and height is written is both.
+          // When both are written and differ, the runner warns and uses the width.
+          if (!part.Width.HasValue && part.Height.HasValue)
+            part.Width = part.Height;
+          if (!part.Height.HasValue && part.Width.HasValue)
+            part.Height = part.Width;
+          if (!part.Width.HasValue)
+            missing.Add("width");
+        }
+        else
+        {
+          if (!part.Height.HasValue) missing.Add("height");
+          if (!part.Width.HasValue) missing.Add("width");
+        }
         // Only an extruded part needs a depth. Testing "has a curve action" here instead
         // let "extrude, curve" through validation and the runner then dropped the part.
-        if (!part.Depth.HasValue && generator == PartGenerator.Extrude) missing.Add("depth");
+        if (!part.Depth.HasValue && !part.DepthThrough && generator == PartGenerator.Extrude) missing.Add("depth");
 
+        // A negative depth extrudes the other way; only a zero depth has no extent at all.
         nonPositive = part.Height.HasValue && part.Height.Value.Value <= 0 ||
                       part.Width.HasValue && part.Width.Value.Value <= 0 ||
-                      part.Depth.HasValue && part.Depth.Value.Value <= 0;
+                      part.Depth.HasValue && part.Depth.Value.Value == 0;
       }
 
       if (missing.Count > 0)
@@ -1053,6 +1579,21 @@ namespace ListModeling.Core.Syntax
           $"Part '{part.DisplayName}' has a zero or negative dimension."));
       }
 
+      if (part.DepthThrough && generator == PartGenerator.Extrude)
+      {
+        // "through" is measured from the solids a cutter cuts, so a part that is not a
+        // cutter has no depth at all.
+        if (part.Role != PartRole.Subtract)
+        {
+          part.HasError = true;
+          diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
+            $"Part '{part.DisplayName}': depth 'through' only applies to subtract parts."));
+        }
+        else if (part.Fillet != null)
+          diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, part.Line,
+            $"Part '{part.DisplayName}': filletEdge does nothing on a through cutter; it is ignored."));
+      }
+
       if (part.Fillet != null && generator != PartGenerator.Extrude)
         diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, part.Line,
           $"Part '{part.DisplayName}': filletEdge applies to extruded parts only; it is ignored."));
@@ -1060,6 +1601,40 @@ namespace ListModeling.Core.Syntax
       if (part.CurveName != null && generator != PartGenerator.Pipe)
         diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, part.Line,
           $"Part '{part.DisplayName}': 'curve' is only read by pipe parts."));
+    }
+
+    /// <summary>
+    /// A select part is the solids already on its layer, kept as the solids its element
+    /// cuts. It needs the layer and nothing else; cutting or merging selected solids, and
+    /// selecting in union or surface elements, are planned.
+    /// </summary>
+    static void ValidateSelect(Part part, ElementFamily family, List<Diagnostic> diagnostics)
+    {
+      if (string.IsNullOrWhiteSpace(part.LayerName))
+      {
+        part.HasError = true;
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
+          $"Part '{part.DisplayName}': select needs a LayerName naming the layer to read."));
+      }
+
+      if (part.Role != PartRole.Keep)
+      {
+        part.HasError = true;
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
+          $"Part '{part.DisplayName}': 'select, {part.Role.ToString().ToLowerInvariant()}' is planned; select reads kept solids only for now."));
+      }
+
+      if (family == ElementFamily.Union || family == ElementFamily.Surface)
+      {
+        part.HasError = true;
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
+          $"Part '{part.DisplayName}': select works in Boolean and BooleanDifference elements only for now."));
+      }
+
+      if (part.Height.HasValue || part.Width.HasValue || part.Depth.HasValue || part.DepthThrough ||
+          part.ShapeSet || part.Coordinates.Count > 0)
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, part.Line,
+          $"Part '{part.DisplayName}': select reads existing solids; its dimensions, shape and position are not used."));
     }
 
     static string Truncate(string text, int max)

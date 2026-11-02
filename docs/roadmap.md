@@ -5,7 +5,11 @@
 Publish the plugin to the Rhino package marketplace (yak) under the package
 name `list-modeling`, once the alpha has been verified on real models.
 
-## Current state: 0.0.0-alpha.1.1.0
+Until then, the plugin is developed against one complete model, the
+electronics module in `tests/progress.3dm`. Each release adds the syntax that
+the module's next parts need.
+
+## Current state: 0.0.0-alpha.1.2.0
 
 The simple use case works end to end: a list of rectangular, round, elliptic
 or polygonal parts with an orientation, dimensions, a position and an action
@@ -17,7 +21,14 @@ The second alpha adds the first tooling and the first part made along a curve:
 `filletEdge` rounds the edges of an extruded part, and the `pipe` action builds
 a tube along a curve part or a named curve in the model, which can also cut a
 groove. Layers can be nested, every number can be written as arithmetic, and
-`actions` reads as how a part is made followed by what its solid does. Treat
+`actions` reads as how a part is made followed by what its solid does.
+
+The third alpha is about how values travel through a list. Headers nest to any
+depth and a value on a container reaches every part below it. A header written
+again continues or rebuilds what it named, and group references build a
+group's parts again in another element with the values of their new place.
+Squares, world coordinates, negative depths, through cuts and the `select`
+action, which edits solids already in the model in place, come with it. Treat
 every build as experimental.
 
 ## Expanding the syntax
@@ -101,9 +112,11 @@ panel stays open. The contract is written down in
 2. First pre-release package on the yak test server; confirm the `rh8` tag.
 3. Verify fillets and pipes by eye beside the reference models, then add
    Steps prompts for them.
-4. Surface elements, starting with `Loft` via `offset`.
-5. Tooling: `chamferEdge` and `blendEdge`, on the `filletEdge` pattern.
-6. Sibling integration with `rhino3d-markdown-notes`.
-7. Marketplace release.
+4. Rebuild the module in `tests/progress.3dm` from lists, part by part,
+   starting with its board.
+5. Surface elements, starting with `Loft` via `offset`.
+6. Tooling: `chamferEdge` and `blendEdge`, on the `filletEdge` pattern.
+7. Sibling integration with `rhino3d-markdown-notes`.
+8. Marketplace release.
 
 [TODO.md](../TODO.md) tracks the items above at task granularity.

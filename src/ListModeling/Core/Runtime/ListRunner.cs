@@ -15,10 +15,12 @@ namespace ListModeling.Core.Runtime
   ///
   /// Every curve part in the list is built first, so a pipe can follow a curve that is
   /// written anywhere in the list. Then, per element:
-  ///   each part is made by its generator (an extruded profile, a profile curve, or a
-  ///   pipe along a curve), fillets are applied to extruded solids while their edges
-  ///   are still the ones the list describes, and each solid then plays its role: kept,
-  ///   merged into the kept solids (union), or cut out of every one of them (subtract).
+  ///   each part is made by its generator (an extruded profile, a profile curve, a pipe
+  ///   along a curve, or the solids already on a layer for select), fillets are applied to
+  ///   extruded solids while their edges are still the ones the list describes, and each
+  ///   solid then plays its role: kept, merged into the kept solids (union), or cut out of
+  ///   every kept solid it reaches (subtract). A "through" cutter is sized once the kept
+  ///   solids are known. Selected solids are edited in place, keeping their object ids.
   ///   Surface element types (Loft, Revolve, ...) are planned; for now they produce the
   ///   profile curves so the surface step can be finished by hand.
   /// </summary>
@@ -110,7 +112,17 @@ namespace ListModeling.Core.Runtime
       public bool CanExtend;
       /// <summary>The curve a pipe follows, which the boolean retry can rebuild it around.</summary>
       public Curve Rail;
+      /// <summary>A "depth: through" cutter: only the profile exists until the kept solids are known.</summary>
+      public bool Through;
+      /// <summary>Select only: the object this solid was read from, and its attributes.</summary>
+      public Guid SourceId;
+      public ObjectAttributes SourceAttributes;
+      /// <summary>Select only: true once a union or a cut has changed the solid, so the object needs replacing.</summary>
+      public bool Changed;
     }
+
+    /// <summary>Selected objects already replaced in the element being run; later pieces of the same one are added beside it.</summary>
+    readonly HashSet<Guid> _replaced = new HashSet<Guid>();
 
     /// <summary>
     /// How far around a closed rail the boolean retry moves a pipe's seam: well away from
@@ -165,9 +177,18 @@ namespace ListModeling.Core.Runtime
       var bases = new List<Built>();
       var unions = new List<Built>();
       var cutters = new List<Built>();
+      var selected = new HashSet<Guid>();
+      _replaced.Clear();
 
       foreach (var part in element.Parts)
       {
+        if (part.Generator == PartGenerator.Select)
+        {
+          if (!part.HasError)
+            bases.AddRange(SelectSolids(part, report, selected));
+          continue;
+        }
+
         var built = _prebuilt.TryGetValue(part, out var early) ? early : BuildPart(part, family, report);
         if (built == null)
           continue;
@@ -175,6 +196,13 @@ namespace ListModeling.Core.Runtime
         if (MakesCurve(part, family))
         {
           AddCurve(built, report, groups);
+          continue;
+        }
+
+        // A through cutter has only its profile until the kept solids are known.
+        if (built.Through)
+        {
+          cutters.Add(built);
           continue;
         }
 
@@ -198,83 +226,286 @@ namespace ListModeling.Core.Runtime
         bases.Clear();
       }
 
-      // Union step: everything marked union merges with the extruded solids.
+      if (unions.Count > 0 || cutters.Count > 0)
+        foreach (var built in bases.Concat(unions).Concat(cutters))
+          WarnIfThin(built, report);
+
+      var consumed = new List<Guid>();
       if (unions.Count > 0)
+        UnionStep(element, bases, unions, consumed, report);
+
+      BuildThroughCutters(cutters, bases, report);
+
+      if (cutters.Count == 0)
       {
-        var pool = bases.Concat(unions).ToList();
-        var merged = Brep.CreateBooleanUnion(pool.Select(b => b.Solid), _tolerance);
-        if (merged == null || merged.Length == 0)
-        {
-          report.Warnings.Add($"Element '{element.Type}' (line {element.Line}): union failed; parts are kept separate.");
-          bases.AddRange(unions);
-        }
-        else
-        {
-          var template = pool[0];
-          bases.Clear();
-          foreach (var brep in merged)
-            bases.Add(CloneWithSolid(template, brep));
-        }
+        foreach (var b in bases)
+          Keep(b, report, groups);
       }
-
-      // Subtract step: every cutter is taken out of every remaining solid.
-      if (cutters.Count > 0)
+      else if (bases.Count == 0)
       {
-        if (bases.Count == 0)
-        {
-          report.Warnings.Add($"Element '{element.Type}' (line {element.Line}): subtract parts but nothing to subtract from; cutters are added as solids.");
-          foreach (var cutter in cutters)
-            AddSolid(cutter, cutter.Solid, report, groups, isBase: false);
-        }
-        else
-        {
-          var cutterBreps = cutters.Select(c => c.Solid).ToList();
-          List<Brep> extended = null;
-          bool manualFallback = false;
-
-          foreach (var b in bases)
-          {
-            var result = Brep.CreateBooleanDifference(new[] { b.Solid }, cutterBreps, _tolerance);
-            if (result == null || result.Length == 0)
-            {
-              // Coplanar caps and coinciding seams make booleans flaky. Retry with extruded
-              // cutters that overshoot both ends and pipes whose seam is turned away; other
-              // cutters take part in the retry as they are.
-              extended = extended ?? cutters.Select(c => RetryCutter(c) ?? c.Solid).ToList();
-              result = Brep.CreateBooleanDifference(new[] { b.Solid }, extended, _tolerance);
-            }
-
-            if (result == null || result.Length == 0)
-            {
-              report.Warnings.Add($"Part '{b.Part.DisplayName}' (line {b.Part.Line}): boolean difference failed; solid and cutters are added for manual work.");
-              AddSolid(b, b.Solid, report, groups, isBase: true);
-              manualFallback = true;
-              continue;
-            }
-
-            foreach (var brep in result)
-              AddSolid(b, brep, report, groups, isBase: true);
-          }
-
-          if (manualFallback)
-            foreach (var cutter in cutters)
-              AddSolid(cutter, cutter.Solid, report, groups, isBase: false);
-        }
+        report.Warnings.Add($"Element '{element.Type}' (line {element.Line}): subtract parts but nothing to subtract from; cutters are added as solids.");
+        foreach (var cutter in cutters)
+          AddSolid(cutter, cutter.Solid, report, groups, isBase: false);
       }
       else
       {
-        foreach (var b in bases)
-          AddSolid(b, b.Solid, report, groups, isBase: true);
+        SubtractStep(bases, cutters, report, groups);
       }
+
+      // Selected objects that a union merged into another one are gone from the model now.
+      foreach (var id in consumed)
+        if (_doc.Objects.Delete(id, true))
+          report.ModifiedIds.Add(id);
+    }
+
+    /// <summary>
+    /// Everything marked union merges with the kept solids. Each merged piece belongs to the
+    /// first selected solid that went into it (judged by bounding box), which it replaces;
+    /// other selected solids merged into the same piece are consumed. A piece with no
+    /// selected solid in it is a new object.
+    /// </summary>
+    void UnionStep(Element element, List<Built> bases, List<Built> unions, List<Guid> consumed, RunReport report)
+    {
+      var pool = bases.Concat(unions).ToList();
+      var merged = Brep.CreateBooleanUnion(pool.Select(b => b.Solid), _tolerance);
+      if (merged == null || merged.Length == 0)
+      {
+        report.Warnings.Add($"Element '{element.Type}' (line {element.Line}): union failed; parts are kept separate.");
+        bases.AddRange(unions);
+        return;
+      }
+
+      var sources = pool.Where(b => b.SourceId != Guid.Empty).ToList();
+      var owners = new HashSet<Guid>();
+      var template = pool.FirstOrDefault(b => b.SourceId == Guid.Empty) ?? pool[0];
+      bases.Clear();
+      foreach (var brep in merged)
+      {
+        var piece = brep.GetBoundingBox(true);
+        piece.Inflate(_tolerance);
+        var owner = sources.FirstOrDefault(s => !owners.Contains(s.SourceId) && piece.Contains(s.Solid.GetBoundingBox(true), false));
+        Built built;
+        if (owner != null)
+        {
+          owners.Add(owner.SourceId);
+          built = CloneWithSolid(owner, brep);
+        }
+        else
+        {
+          built = CloneWithSolid(template, brep);
+          built.SourceId = Guid.Empty;
+          built.SourceAttributes = null;
+        }
+        built.Changed = true;
+        bases.Add(built);
+      }
+      consumed.AddRange(sources.Where(s => !owners.Contains(s.SourceId)).Select(s => s.SourceId));
+    }
+
+    /// <summary>
+    /// Each kept solid is cut by the cutters whose bounding boxes reach it; Rhino fails a
+    /// difference outright when a cutter misses. A cutter that reaches none of them cut
+    /// nothing, which usually means it is in the wrong place, so it stays in the model with
+    /// a warning rather than disappearing.
+    /// </summary>
+    void SubtractStep(List<Built> bases, List<Built> cutters, RunReport report, Dictionary<string, List<Guid>> groups)
+    {
+      var used = new HashSet<Built>();
+      bool manualFallback = false;
+
+      foreach (var b in bases)
+      {
+        var reach = b.Solid.GetBoundingBox(true);
+        reach.Inflate(_tolerance);
+        var reaching = cutters.Where(c => Overlaps(reach, c.Solid.GetBoundingBox(true))).ToList();
+        if (reaching.Count == 0)
+        {
+          Keep(b, report, groups);
+          continue;
+        }
+        used.UnionWith(reaching);
+
+        var result = Brep.CreateBooleanDifference(new[] { b.Solid }, reaching.Select(c => c.Solid), _tolerance);
+        if (result == null || result.Length == 0)
+        {
+          // Coplanar caps and coinciding seams make booleans flaky. Retry with extruded
+          // cutters that overshoot their ends outside this solid and pipes whose seam is
+          // turned away; other cutters take part in the retry as they are.
+          var retried = reaching.Select(c => RetryCutter(c, b.Solid) ?? c.Solid).ToList();
+          result = Brep.CreateBooleanDifference(new[] { b.Solid }, retried, _tolerance);
+        }
+
+        if (result == null || result.Length == 0)
+        {
+          report.Warnings.Add($"Part '{b.Part.DisplayName}' (line {b.Part.Line}): boolean difference failed; solid and cutters are added for manual work.");
+          Keep(b, report, groups);
+          manualFallback = true;
+          continue;
+        }
+
+        b.Changed = true;
+        foreach (var brep in result)
+          AddSolid(b, brep, report, groups, isBase: true);
+      }
+
+      foreach (var cutter in cutters)
+      {
+        if (used.Contains(cutter))
+        {
+          if (manualFallback)
+            AddSolid(cutter, cutter.Solid, report, groups, isBase: false);
+          continue;
+        }
+        report.Warnings.Add($"Part '{cutter.Part.DisplayName}' (line {cutter.Part.Line}): reaches none of the element's kept solids, so it cuts nothing; it is added for manual work.");
+        AddSolid(cutter, cutter.Solid, report, groups, isBase: false);
+      }
+    }
+
+    /// <summary>
+    /// Sizes each "depth: through" cutter: its profile moves along its depth axis to just
+    /// before the kept solids begin and extrudes to just past where they end.
+    /// </summary>
+    void BuildThroughCutters(List<Built> cutters, List<Built> bases, RunReport report)
+    {
+      foreach (var cutter in cutters.Where(c => c.Through).ToList())
+      {
+        if (bases.Count == 0)
+        {
+          report.Errors.Add($"Part '{cutter.Part.DisplayName}' (line {cutter.Part.Line}): depth 'through' has no kept solid to go through in this element; the part is skipped.");
+          cutters.Remove(cutter);
+          continue;
+        }
+
+        // Every orientation's depth axis is a world axis, so the extent is one interval.
+        var axis = new Vector3d(Math.Abs(cutter.DepthDirection.X), Math.Abs(cutter.DepthDirection.Y), Math.Abs(cutter.DepthDirection.Z));
+        double low = double.MaxValue, high = double.MinValue;
+        foreach (var b in bases)
+        {
+          var box = b.Solid.GetBoundingBox(true);
+          low = Math.Min(low, new Vector3d(box.Min) * axis);
+          high = Math.Max(high, new Vector3d(box.Max) * axis);
+        }
+        double margin = Math.Max(10 * _tolerance, (high - low) * 0.01);
+
+        var shift = axis * (low - margin - new Vector3d(cutter.Plane.Origin) * axis);
+        var profile = cutter.Profile.DuplicateCurve();
+        profile.Translate(shift);
+        cutter.Plane = new Plane(cutter.Plane.Origin + shift, cutter.Plane.XAxis, cutter.Plane.YAxis);
+        cutter.DepthDirection = axis;
+        cutter.Depth = high - low + 2 * margin;
+        cutter.Solid = PartGeometry.Solid(profile, axis * cutter.Depth, _tolerance);
+        if (cutter.Solid == null)
+        {
+          report.Errors.Add($"Part '{cutter.Part.DisplayName}' (line {cutter.Part.Line}): could not build a closed solid.");
+          cutters.Remove(cutter);
+        }
+      }
+    }
+
+    /// <summary>
+    /// A solid thinner than about twice the model's absolute tolerance makes booleans fail,
+    /// or worse, succeed with the wrong shape: a 0.004 pocket cut a board correctly at a
+    /// tolerance of 0.001 and left it broken at 0.01. Pipes warn on their own and selected
+    /// solids have no list dimensions, so neither is checked here.
+    /// </summary>
+    void WarnIfThin(Built built, RunReport report)
+    {
+      if (built.SourceId != Guid.Empty || built.Profile == null)
+        return;
+      double across;
+      switch (built.Part.Shape)
+      {
+        case PartShape.Circle:
+        case PartShape.Polygon: across = 2 * built.Width; break;
+        case PartShape.Ellipse: across = 2 * Math.Min(built.Width, built.Height); break;
+        case PartShape.Square: across = built.Width; break;
+        default: across = Math.Min(built.Width, built.Height); break;
+      }
+      double thinnest = built.Through ? across : Math.Min(across, built.Depth);
+      if (thinnest < 2 * _tolerance)
+        report.Warnings.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): a size of {Invariant(thinnest)} is close to the model's absolute tolerance ({Invariant(_tolerance)}); booleans with this part may fail or come out wrong. A smaller tolerance in Document Properties helps.");
+    }
+
+    /// <summary>A kept solid with nothing more done to it. A selected one the element did not change is left alone.</summary>
+    void Keep(Built built, RunReport report, Dictionary<string, List<Guid>> groups)
+    {
+      if (built.SourceId != Guid.Empty && !built.Changed)
+        return;
+      AddSolid(built, built.Solid, report, groups, isBase: true);
+    }
+
+    static bool Overlaps(BoundingBox a, BoundingBox b)
+      => a.Min.X <= b.Max.X && b.Min.X <= a.Max.X
+      && a.Min.Y <= b.Max.Y && b.Min.Y <= a.Max.Y
+      && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
+
+    /// <summary>
+    /// Every closed solid on exactly the part's layer that a person could select: visible,
+    /// unlocked, on a visible, unlocked layer. Extrusions are read as breps. An object two
+    /// select parts of one element both name is read once.
+    /// </summary>
+    List<Built> SelectSolids(Part part, RunReport report, HashSet<Guid> selected)
+    {
+      var solids = new List<Built>();
+      int layerIndex = FindLayer(part.LayerName);
+      if (layerIndex < 0)
+      {
+        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): no layer '{part.LayerName}' in the model; nothing to select.");
+        return solids;
+      }
+
+      var settings = new ObjectEnumeratorSettings
+      {
+        LayerIndexFilter = layerIndex,
+        ObjectTypeFilter = ObjectType.Brep | ObjectType.Extrusion,
+        NormalObjects = true,
+        LockedObjects = false,
+        HiddenObjects = false,
+        DeletedObjects = false,
+      };
+
+      bool readBefore = false;
+      foreach (var obj in _doc.Objects.GetObjectList(settings))
+      {
+        if (!obj.IsSelectable(true, true, false, false))
+          continue;
+        var brep = obj.Geometry is Extrusion extrusion ? extrusion.ToBrep(true) : (obj.Geometry as Brep)?.DuplicateBrep();
+        if (brep == null || !brep.IsSolid)
+          continue;
+        if (!selected.Add(obj.Id))
+        {
+          readBefore = true;
+          continue;
+        }
+
+        if (brep.SolidOrientation == BrepSolidOrientation.Inward)
+          brep.Flip();
+        solids.Add(new Built
+        {
+          Part = part,
+          Plane = Plane.WorldXY,
+          DepthDirection = Vector3d.Zero,
+          Solid = brep,
+          LayerIndex = obj.Attributes.LayerIndex,
+          SourceId = obj.Id,
+          SourceAttributes = obj.Attributes.Duplicate(),
+        });
+      }
+
+      if (readBefore)
+        report.Messages.Add($"Part '{part.DisplayName}' (line {part.Line}): solids another select part of this element already read are read once.");
+      else if (solids.Count == 0)
+        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): no visible, unlocked solid on layer '{part.LayerName}'; nothing to select.");
+      return solids;
     }
 
     // ---- Parts --------------------------------------------------------------
 
     Built BuildPart(Part part, ElementFamily family, RunReport report)
     {
-      // A part the parser flagged as an error cannot be built correctly: a negative
-      // depth would extrude the wrong way, a missing one not at all. The error is
-      // already in the report, so skip quietly rather than produce wrong geometry.
+      // A part the parser flagged as an error cannot be built correctly: a zero depth
+      // has no extent, a missing one none at all. The error is already in the report,
+      // so skip quietly rather than produce wrong geometry.
       if (part.HasError)
         return null;
 
@@ -285,7 +516,8 @@ namespace ListModeling.Core.Runtime
         return null;
 
       bool needsDepth = !MakesCurve(part, family);
-      if (needsDepth && !part.Depth.HasValue)
+      bool through = needsDepth && part.DepthThrough;
+      if (needsDepth && !part.Depth.HasValue && !through)
         return null;
 
       double width = ToModel(part.Width.Value);
@@ -297,9 +529,20 @@ namespace ListModeling.Core.Runtime
 
       if (part.Shape == PartShape.Circle && Math.Abs(width - height) > _tolerance)
         report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): circle uses width as the radius; height differs and is ignored.");
+      if (part.Shape == PartShape.Square && Math.Abs(width - height) > _tolerance)
+        report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): square uses width as its side; height differs and is ignored.");
 
       var plane = PartGeometry.ProfilePlane(part.Orientation, a, b, offset);
       PartGeometry.Frame(part.Orientation, out _, out _, out var depthDirection);
+
+      // A negative depth extrudes the other way from the same profile plane. Turning the
+      // direction instead of the sign keeps every later step, fillet loops included,
+      // working with a positive depth: loop 0 stays on the profile plane.
+      if (depth < 0)
+      {
+        depthDirection = -depthDirection;
+        depth = -depth;
+      }
 
       var profile = PartGeometry.Profile(part.Shape, part.PolygonSides, plane, width, height);
       if (profile == null || !profile.IsValid)
@@ -318,9 +561,10 @@ namespace ListModeling.Core.Runtime
         Depth = depth,
         Profile = profile,
         LayerIndex = ResolveLayer(part, report),
+        Through = through,
       };
 
-      if (needsDepth)
+      if (needsDepth && !through)
       {
         built.Solid = PartGeometry.Solid(profile, depthDirection * depth, _tolerance);
         built.CanExtend = built.Solid != null && part.Fillet == null;
@@ -406,12 +650,13 @@ namespace ListModeling.Core.Runtime
     }
 
     /// <summary>
-    /// A second try at a cutter for a boolean that failed. A plain extrusion starts slightly
-    /// before its profile plane and runs slightly past its depth; a pipe around a closed
-    /// curve is rebuilt with its seam turned away from where it was. Null for any other
-    /// cutter, which is retried as it is.
+    /// A second try at a cutter for a boolean that failed. A plain extrusion is extended at
+    /// each end that does not lie inside the solid being cut, so an end flush with a face
+    /// moves outward while the floor of a blind pocket stays where it is. A pipe around a
+    /// closed curve is rebuilt with its seam turned away from where it was. Null for any
+    /// other cutter, and for an extrusion with both ends inside, which are retried as they are.
     /// </summary>
-    Brep RetryCutter(Built cutter)
+    Brep RetryCutter(Built cutter, Brep solid)
     {
       if (cutter.Rail != null && cutter.Rail.IsClosed)
         return PipeBuilder.Build(cutter.Rail, cutter.Part.RadiusStations, ToModel, _tolerance,
@@ -419,10 +664,25 @@ namespace ListModeling.Core.Runtime
 
       if (!cutter.CanExtend || cutter.Profile == null)
         return null;
+
+      // The depth axis is a world axis, so the solid's extent along it is one interval.
+      var direction = cutter.DepthDirection;
+      var axis = new Vector3d(Math.Abs(direction.X), Math.Abs(direction.Y), Math.Abs(direction.Z));
+      var box = solid.GetBoundingBox(true);
+      double low = new Vector3d(box.Min) * axis, high = new Vector3d(box.Max) * axis;
+      double start = new Vector3d(cutter.Plane.Origin) * axis;
+      double end = start + (direction * axis) * cutter.Depth;
+      bool Inside(double t) => t > low + _tolerance && t < high - _tolerance;
+
       double margin = Math.Max(_tolerance * 10, cutter.Depth * 0.001);
+      double before = Inside(start) ? 0 : margin;
+      double after = Inside(end) ? 0 : margin;
+      if (before == 0 && after == 0)
+        return null;
+
       var profile = cutter.Profile.DuplicateCurve();
-      profile.Translate(-cutter.DepthDirection * margin);
-      return PartGeometry.Solid(profile, cutter.DepthDirection * (cutter.Depth + 2 * margin), _tolerance);
+      profile.Translate(-direction * before);
+      return PartGeometry.Solid(profile, direction * (cutter.Depth + before + after), _tolerance);
     }
 
     static Built CloneWithSolid(Built template, Brep solid)
@@ -438,12 +698,21 @@ namespace ListModeling.Core.Runtime
         Solid = solid,
         LayerIndex = template.LayerIndex,
         CanExtend = false,
+        SourceId = template.SourceId,
+        SourceAttributes = template.SourceAttributes,
+        Changed = template.Changed,
       };
 
     // ---- Document -----------------------------------------------------------
 
     void AddSolid(Built built, Brep brep, RunReport report, Dictionary<string, List<Guid>> groups, bool isBase)
     {
+      if (built.SourceId != Guid.Empty)
+      {
+        AddSelected(built, brep, report, isBase);
+        return;
+      }
+
       var id = _doc.Objects.AddBrep(brep, Attributes(built));
       if (id == Guid.Empty)
       {
@@ -454,6 +723,37 @@ namespace ListModeling.Core.Runtime
       if (isBase)
         report.BaseIds.Add(id);
       Remember(groups, built.Part, id);
+    }
+
+    /// <summary>
+    /// A solid that came from a selected object goes back into that object: the first piece
+    /// replaces it, keeping its id and attributes, and any further piece of a cut that split
+    /// it is added beside it with a copy of those attributes.
+    /// </summary>
+    void AddSelected(Built built, Brep brep, RunReport report, bool isBase)
+    {
+      if (_replaced.Add(built.SourceId))
+      {
+        if (!_doc.Objects.Replace(built.SourceId, brep))
+        {
+          report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused to replace the selected object {built.SourceId}.");
+          return;
+        }
+        report.ModifiedIds.Add(built.SourceId);
+        if (isBase)
+          report.BaseIds.Add(built.SourceId);
+        return;
+      }
+
+      var id = _doc.Objects.AddBrep(brep, built.SourceAttributes.Duplicate());
+      if (id == Guid.Empty)
+      {
+        report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused the solid.");
+        return;
+      }
+      report.CreatedIds.Add(id);
+      if (isBase)
+        report.BaseIds.Add(id);
     }
 
     void AddCurve(Built built, RunReport report, Dictionary<string, List<Guid>> groups)
@@ -505,29 +805,13 @@ namespace ListModeling.Core.Runtime
     /// </summary>
     int ResolveLayer(Part part, RunReport report)
     {
-      if (string.IsNullOrWhiteSpace(part.LayerName))
-        return _doc.Layers.CurrentLayerIndex;
-
-      var segments = part.LayerName.Split(new[] { ModelComponent.NamePathSeparator }, StringSplitOptions.RemoveEmptyEntries)
-        .Select(s => s.Trim())
-        .Where(s => s.Length > 0)
-        .ToArray();
+      var segments = LayerSegments(part.LayerName);
       if (segments.Length == 0)
         return _doc.Layers.CurrentLayerIndex;
 
-      if (segments.Length == 1)
-      {
-        // A plain name matches a layer of that name wherever it sits, as it always has.
-        var found = _doc.Layers.FindName(segments[0]);
-        if (found != null)
-          return found.Index;
-      }
-      else
-      {
-        int existing = _doc.Layers.FindByFullPath(string.Join(ModelComponent.NamePathSeparator, segments), -1);
-        if (existing >= 0)
-          return existing;
-      }
+      int existing = FindLayer(part.LayerName);
+      if (existing >= 0)
+        return existing;
 
       Guid parentId = Guid.Empty;
       int index = -1;
@@ -565,6 +849,28 @@ namespace ListModeling.Core.Runtime
       }
       return index;
     }
+
+    /// <summary>
+    /// The layer a name or a "Parent::Child" path names, or -1 when the model has none. A
+    /// plain name matches a layer of that name wherever it sits, as it always has.
+    /// </summary>
+    int FindLayer(string layerName)
+    {
+      var segments = LayerSegments(layerName);
+      if (segments.Length == 0)
+        return -1;
+      if (segments.Length == 1)
+        return _doc.Layers.FindName(segments[0])?.Index ?? -1;
+      return _doc.Layers.FindByFullPath(string.Join(ModelComponent.NamePathSeparator, segments), -1);
+    }
+
+    static string[] LayerSegments(string layerName)
+      => string.IsNullOrWhiteSpace(layerName)
+        ? new string[0]
+        : layerName.Split(new[] { ModelComponent.NamePathSeparator }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToArray();
 
     // ---- Units --------------------------------------------------------------
 

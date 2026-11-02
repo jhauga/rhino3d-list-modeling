@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.0-alpha.1.2.0] - 2026-11-01
+
+### Added
+
+- Headers nest to any depth. A header with deeper headers under it is a
+  container at every level, and its values reach every part nested below it;
+  the nearest header wins.
+- Properties written directly under `# Element:` are defaults for every part
+  in that element.
+- An empty value (`- actions:`) clears a value set by a header above.
+- Headers can be reused. Repeating a container's name continues it: lines
+  under the repeat change its values from that line on. A repeated header with
+  nothing under it builds its parts again. `group:<id>[*]` builds every part of
+  an earlier group again, and `group:<id>[n]` the nth, counting from 0. A
+  rebuilt part keeps its own values and those of the headers it was first
+  written under; the headers around it fill in what those leave out.
+- `shape: square`, sized by one `width` or `height`.
+- `x-position`, `y-position` and `z-position` set one world coordinate of a
+  part whatever its orientation.
+- A negative `depth` extrudes the other way along the depth axis.
+- `depth: through` on a subtract part cuts through the full extent of the
+  element's kept solids.
+- `select` action: the solids already on a layer become the kept solids of an
+  element and are edited in place, keeping each object's id, name and
+  attributes. The run summary counts objects changed this way.
+- A warning when a solid that takes part in a boolean is thinner than twice
+  the model's absolute tolerance, where booleans fail or come out wrong.
+- A cutter that reaches none of the element's kept solids produces a warning
+  and is left in the model for manual work.
+- Unit cases, fixtures with golden baselines, and in-Rhino regression cases
+  for all of the above; example list `examples/plate-with-feet.md`.
+
+### Changed
+
+- A level 4 header nests under the level 3 header above it instead of under
+  the level 2 header, and group items are named after the nearest header
+  above them.
+- A container name written again in a later element continues the earlier
+  container instead of starting a new one.
+- `shape: square` was another name for `rectangle` and is now a shape of its
+  own; a square given a different height warns and uses its width.
+- A negative depth is no longer an error. A zero depth still is.
+- An empty `position`, `offset`, `orientation` or `shape` resets to the default
+  without a warning.
+- Unknown properties written on a container are kept on each of its parts.
+- Each kept solid is cut only by the cutters that reach it.
+
+### Fixed
+
+- A boolean retry no longer deepens a blind cut: it extends a cutter only at
+  an end that is not inside the solid being cut.
+
 ## [0.0.0-alpha.1.1.0] - 2026-10-11
 
 ### Added

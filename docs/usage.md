@@ -164,6 +164,10 @@ keep their color. Objects carry the part name as their object name, and
 grouped parts that survive the run are placed in a Rhino group named after
 the group identifier.
 
+A `select` part edits solids that were already in the model. They keep their
+object ids, names, layers and colors, the run's summary counts them as changed,
+and the same undo step restores them.
+
 ## Known limitations
 
 - Surface element types (`Loft`, `Revolve`, `Sweep1`, `Sweep2`, `Patch`,
@@ -175,5 +179,14 @@ the group identifier.
   in the document for manual work, with a warning.
 - The Steps route reads dimensions in model units only; unit suffixes and
   arithmetic are a file feature.
-- The Steps route does not prompt for fillets or pipes; write those in a list
-  and run it from a file or the panel.
+- The Steps route does not prompt for fillets, pipes, squares, world
+  coordinates, through cuts or `select`; write those in a list and run it from
+  a file or the panel.
+- Lists the plugin writes, from GenerateFromSelection or the Steps route,
+  spell every part out in full: containers, repeated headers and group
+  references are not kept, and positions are written as `position` and
+  `offset`. GenerateFromSelection writes rectangles even when the sides are
+  equal.
+- `select` reads one layer, not its sublayers, and its solids are always kept;
+  cutting with or merging selected solids is planned.
+- Running a list that edits selected solids a second time edits them again.

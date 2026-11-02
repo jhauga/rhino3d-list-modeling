@@ -28,12 +28,12 @@
 - actions: extrude
 - material: aluminium
 
-## Negative Depth
+## Zero Depth
 
 - orientation: top
 - height: 5
 - width:  5
-- depth:  -1
+- depth:  0
 - position: 0, 0
 - actions: extrude
 
@@ -46,3 +46,16 @@
 - depth:  1
 - position: 0, 0
 - actions: extrude
+
+## Through Without Cut
+
+- orientation: top
+- height: 5
+- width:  5
+- depth:  through
+- position: 0, 0
+- actions: extrude
+
+## Select Without Layer
+
+- actions: select

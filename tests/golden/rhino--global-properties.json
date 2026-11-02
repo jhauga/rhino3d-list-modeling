@@ -1,0 +1,146 @@
+[
+ {
+  "bbox": [
+   -0.84999999999999998, 
+   -0.40000000000000002, 
+   -0.050000000000000003, 
+   -0.75, 
+   -0.29999999999999999, 
+   -0.045999999999999999
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Bottom Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -0.84999999999999998, 
+   0.29999999999999999, 
+   -0.050000000000000003, 
+   -0.75, 
+   0.40000000000000002, 
+   -0.045999999999999999
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Bottom Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   0.75, 
+   -0.40000000000000002, 
+   -0.050000000000000003, 
+   0.84999999999999998, 
+   -0.29999999999999999, 
+   -0.045999999999999999
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Bottom Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   0.75, 
+   0.29999999999999999, 
+   -0.050000000000000003, 
+   0.84999999999999998, 
+   0.40000000000000002, 
+   -0.045999999999999999
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Bottom Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -0.84999999999999998, 
+   -0.40000000000000002, 
+   0.045999999999999999, 
+   -0.75, 
+   -0.29999999999999999, 
+   0.050000000000000003
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Top Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -0.84999999999999998, 
+   0.29999999999999999, 
+   0.045999999999999999, 
+   -0.75, 
+   0.40000000000000002, 
+   0.050000000000000003
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Top Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   0.75, 
+   -0.40000000000000002, 
+   0.045999999999999999, 
+   0.84999999999999998, 
+   -0.29999999999999999, 
+   0.050000000000000003
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Top Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   0.75, 
+   0.29999999999999999, 
+   0.045999999999999999, 
+   0.84999999999999998, 
+   0.40000000000000002, 
+   0.050000000000000003
+  ], 
+  "faces": 7, 
+  "groups": 1, 
+  "layer": "circuit_connections", 
+  "name": "Pin Top Connection", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   -1.0, 
+   -0.5, 
+   -0.050000000000000003, 
+   1.0, 
+   0.5, 
+   0.050000000000000003
+  ], 
+  "faces": 50, 
+  "groups": 0, 
+  "layer": "board", 
+  "name": "Test Board", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

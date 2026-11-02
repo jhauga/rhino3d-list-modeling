@@ -1,0 +1,146 @@
+[
+ {
+  "bbox": [
+   799.5, 
+   -0.5, 
+   0.0, 
+   800.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "first", 
+  "name": "Block A", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   799.5, 
+   -0.5, 
+   10.0, 
+   800.5, 
+   0.5, 
+   12.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "second", 
+  "name": "Block A", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   804.5, 
+   -0.5, 
+   0.0, 
+   805.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "first", 
+  "name": "Corner", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   804.5, 
+   4.5, 
+   0.0, 
+   805.5, 
+   5.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "first", 
+  "name": "Corner", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   804.5, 
+   9.5, 
+   0.0, 
+   805.5, 
+   10.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "first", 
+  "name": "Corner", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   804.0, 
+   9.5, 
+   10.0, 
+   806.0, 
+   10.5, 
+   12.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "second", 
+  "name": "Corner", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   804.5, 
+   4.5, 
+   10.0, 
+   805.5, 
+   5.5, 
+   12.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "second", 
+  "name": "Corner", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   809.75, 
+   -0.25, 
+   0.0, 
+   810.25, 
+   0.25, 
+   2.0
+  ], 
+  "faces": 3, 
+  "groups": 0, 
+  "layer": "first", 
+  "name": "Peg", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   809.75, 
+   -0.25, 
+   10.0, 
+   810.25, 
+   0.25, 
+   12.0
+  ], 
+  "faces": 3, 
+  "groups": 0, 
+  "layer": "second", 
+  "name": "Peg", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

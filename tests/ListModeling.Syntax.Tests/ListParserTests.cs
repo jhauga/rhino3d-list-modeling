@@ -70,10 +70,11 @@ namespace ListModeling.Syntax.Tests
     }
 
     [Fact]
-    public void PropertiesBeforeAnyPartAreIgnoredWithAWarning()
+    public void PropertiesBeforeAnyElementAreIgnoredWithAWarning()
     {
-      var doc = ListParser.Parse("# Element: Boolean\n\n* height: 1\n\n## Part\n\n" + Dimensions);
+      var doc = ListParser.Parse("* height: 7\n\n# Element: Boolean\n\n## Part\n\n" + Dimensions);
       Assert.Contains(doc.Diagnostics, d => d.Level == DiagnosticLevel.Warning && d.Message.Contains("before any"));
+      Assert.Equal(1.0, Assert.Single(doc.AllParts).Height.Value.Value, 9);
     }
 
     [Fact]
@@ -260,7 +261,8 @@ namespace ListModeling.Syntax.Tests
 
     [Theory]
     [InlineData("rectangle", PartShape.Rectangle, 6)]
-    [InlineData("square", PartShape.Rectangle, 6)]
+    [InlineData("square", PartShape.Square, 6)]
+    [InlineData("box", PartShape.Rectangle, 6)]
     [InlineData("circle", PartShape.Circle, 6)]
     [InlineData("ellipse", PartShape.Ellipse, 6)]
     [InlineData("triangle", PartShape.Polygon, 3)]
@@ -420,6 +422,17 @@ namespace ListModeling.Syntax.Tests
       Assert.True(doc.HasErrors);
       Assert.Contains(doc.Diagnostics, d => d.Level == DiagnosticLevel.Error && d.Message.Contains("zero or negative"));
       Assert.True(Assert.Single(doc.AllParts).HasError);
+    }
+
+    [Fact]
+    public void ANegativeDepthExtrudesTheOtherWay()
+    {
+      var doc = ListParser.Parse("# Element: Boolean\n\n## Part\n\n* height: 1\n* width: 2\n* depth: -.5\n");
+      Assert.Empty(doc.Diagnostics);
+      var part = Assert.Single(doc.AllParts);
+      Assert.False(part.HasError);
+      Assert.Equal(-0.5, part.Depth.Value.Value, 9);
+      Assert.Contains("- depth:  -0.5", ListWriter.Write(doc));
     }
 
     [Fact]

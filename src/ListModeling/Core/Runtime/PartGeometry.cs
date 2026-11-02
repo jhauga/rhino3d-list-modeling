@@ -50,7 +50,8 @@ namespace ListModeling.Core.Runtime
 
     /// <summary>
     /// The closed profile curve. For circles the width is the radius; for ellipses width
-    /// and height are the two radii; polygons are inscribed in a circle of radius width.
+    /// and height are the two radii; polygons are inscribed in a circle of radius width;
+    /// a square's side is the width.
     /// </summary>
     public static Curve Profile(PartShape shape, int polygonSides, Plane plane, double width, double height)
     {
@@ -74,6 +75,9 @@ namespace ListModeling.Core.Runtime
             points.Add(points[0]);
             return new Polyline(points).ToNurbsCurve();
           }
+
+        case PartShape.Square:
+          return new Rectangle3d(plane, new Interval(-width / 2, width / 2), new Interval(-width / 2, width / 2)).ToNurbsCurve();
 
         default:
           return new Rectangle3d(plane, new Interval(-width / 2, width / 2), new Interval(-height / 2, height / 2)).ToNurbsCurve();

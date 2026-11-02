@@ -63,17 +63,29 @@ regression suite.
 | `sequenced-actions.md` | A pipe used as a cutter on a filleted part |
 | `nested-layers.md` | The three ways to write a nested layer |
 | `arithmetic.md` | Arithmetic and units inside values |
+| `references.md` | Repeated headers and group references, with the values a rebuilt part takes from its new place |
+| `axis-positions.md` | `x-position`, `y-position` and `z-position` on every orientation, the nearest line winning, a negative depth, squares |
+| `through-cuts.md` | `depth: through` cutters across two stacked solids and along a side axis |
+| `global-properties.md` | Values set on headers several levels up, a selected solid edited in place, and pads cut, then rebuilt as solids |
 
 The Rhino models in `.support/3d-examples/` were drawn by hand to show what the
 fillet, pipe and groove fixtures should look like. They are references to open
 beside a result and compare by eye, not baselines: their sizes differ slightly
 from the fixture numbers, and no test reads them.
 
+`tests/progress.3dm` is the module model the plugin is being built toward, so it
+stays here until the plugin is published. It is a visual reference that no
+suite opens. Its board does not sit where the fixture's numbers expect, so
+`global-properties.md` brings its own board instead: its case draws a 2 by 1 by
+.1 box centered on the origin on the board layer before the run, the way a
+board already in a model would be.
+
 Most cases run at the inch template's absolute tolerance of 0.01. The grooved
-part in `sequenced-actions.md` is cut by a pipe only 0.01 thick, so its case
-switches the document to 0.001 for the run and restores the tolerance afterward.
-A separate case checks that a pipe this close to the tolerance warns when it is
-built at 0.01.
+part in `sequenced-actions.md` is cut by a pipe only 0.01 thick, and the pockets
+in `global-properties.md` are shallower than the template's tolerance, so those
+cases switch the document to 0.001 for the run and restore the tolerance
+afterward. Separate cases check that
+a pipe, or a solid, this close to the tolerance warns when it is built at 0.01.
 
 ## Why the in-Rhino suites are written this way
 
@@ -150,14 +162,15 @@ The fixtures encode the distinction the plugin makes, and the suites assert it
 from both sides:
 
 - An **error** means the part cannot be built correctly, so the runner skips it.
-  A missing dimension and a zero or negative dimension are errors.
+  A missing dimension, a zero dimension, and a negative height or width are
+  errors. A negative depth is not: it extrudes the other way.
 - A **warning** means a value could not be read but resolves to a documented
   default, so the part is still built. An unknown color, orientation, shape or
   action, and a position with the wrong number of values, are warnings.
 
 `tests/fixtures/malformed.md` contains both kinds. The smoke suite asserts that
-exactly the two parts whose values all resolve are built, and that the other
-three are skipped with their errors reported.
+exactly the two parts whose values all resolve are built, and that the others
+are skipped with their errors reported.
 
 ## Manual checks
 
@@ -166,7 +179,8 @@ Two things the automated suites cannot reach. Both belong in a release check.
 - **Undo.** Rhino does not process undo records created while a script is still
   running, so `doc.Undo()` and the `_Undo` command are both no-ops inside the
   harness and a test there would pass no matter what the plugin did. Check by
-  hand that one run undoes in one step.
+  hand that one run undoes in one step, including a run whose `select` part
+  edited a solid already in the model.
 - **File dialogs.** Load List, Export List to File and Import File to Embedded
   List each open a native OS dialog that cannot be driven in process. The suites
   cover everything behind those dialogs by calling `RunListFile`,
