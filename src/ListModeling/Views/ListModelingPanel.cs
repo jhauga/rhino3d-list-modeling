@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
 using ListModeling.Core;
+using ListModeling.Core.Generate;
 using ListModeling.Core.Runtime;
 using Rhino;
 using Rhino.UI;
@@ -15,13 +17,17 @@ namespace ListModeling.Views
   ///   List Modeling                                  [menu]
   ///   [Load List]
   ///   Embedded List
-  ///   (text area)
+  ///   (line numbers)(text area)
   ///   [Submit List]
   ///
-  /// The menu offers Export List to File, Import File to Embedded List, and Close Panel.
-  /// Load List runs a file straight away. Submit List writes the text area to a temp
-  /// file, runs that file through the same loader, and removes the temp file afterward,
-  /// so both routes exercise one code path.
+  /// The menu offers Generate from Selection, Export List to File, Import File to
+  /// Embedded List, Wrap Words and Close Panel. Load List runs a file straight away.
+  /// Submit List writes the text area to a temp file, runs that file through the same
+  /// loader, and removes the temp file afterward, so both routes exercise one code path.
+  ///
+  /// The line numbers come from the platform control behind the text area (see
+  /// EditorLines) and are hidden where it cannot report its lines. Wrap Words is kept
+  /// in the plugin's settings, so the editor opens the way it was left.
   ///
   /// Every control carries a stable <see cref="Control.ID"/> (see the Ids class) so the
   /// panel can be driven by id from a script, the way a web page is driven by element id.
@@ -44,10 +50,17 @@ namespace ListModeling.Views
       public const string MenuExport = "menu-export";
       public const string MenuImport = "menu-import";
       public const string MenuClose = "menu-close";
+      public const string MenuGenerate = "menu-generate";
+      public const string MenuWrap = "menu-wrap";
+      public const string LineNumbers = "line-numbers";
     }
+
+    /// <summary>Plugin settings key for Wrap Words.</summary>
+    const string WrapWordsSetting = "PanelWrapWords";
 
     readonly uint _docSerial;
     readonly TextArea _textArea;
+    readonly LineNumberGutter _gutter;
     bool _refreshing;
 
     public static Guid PanelId => typeof(ListModelingPanel).GUID;
@@ -75,13 +88,23 @@ namespace ListModeling.Views
       _textArea = new TextArea
       {
         ID = Ids.EmbeddedList,
-        Wrap = false,
+        Wrap = ReadWrapWords(),
         AcceptsTab = true,
         AcceptsReturn = true,
         Font = Eto.Drawing.Fonts.Monospace(9),
         ToolTip = "Embedded List Input for script",
       };
       _textArea.TextChanged += OnTextChanged;
+
+      _gutter = new LineNumberGutter(_textArea);
+
+      // The numbers and the text share one row, so a row's top in the editor is the
+      // y to draw its number at.
+      var editor = new TableLayout
+      {
+        Spacing = Size.Empty,
+        Rows = { new TableRow(new TableCell(_gutter, false), new TableCell(_textArea, true)) { ScaleHeight = true } },
+      };
 
       var submitButton = new Button { ID = Ids.SubmitList, Text = "Submit List", ToolTip = "Run the embedded list" };
       submitButton.Click += (s, e) => SubmitList();
@@ -90,7 +113,7 @@ namespace ListModeling.Views
       layout.AddSeparateRow(title, null, menuButton);
       layout.AddSeparateRow(loadButton, null);
       layout.AddSeparateRow(embeddedLabel, null);
-      layout.Add(_textArea, xscale: true, yscale: true);
+      layout.Add(editor, xscale: true, yscale: true);
       layout.AddSeparateRow(submitButton, null);
       Content = layout;
 
@@ -111,12 +134,39 @@ namespace ListModeling.Views
       set { _textArea.Text = value ?? string.Empty; }
     }
 
+    /// <summary>
+    /// Whether the editor wraps long lines, so nothing has to be scrolled sideways.
+    /// The choice is kept in the plugin's settings and read when a panel is built.
+    /// </summary>
+    public bool WrapWords
+    {
+      get { return _textArea.Wrap; }
+      set
+      {
+        _textArea.Wrap = value;
+        _gutter.Repaint();
+        ListModelingPlugin.Instance?.Settings.SetBool(WrapWordsSetting, value);
+      }
+    }
+
+    static bool ReadWrapWords()
+    {
+      var settings = ListModelingPlugin.Instance?.Settings;
+      return settings != null && settings.GetBool(WrapWordsSetting, false);
+    }
+
     // ---- Menu -------------------------------------------------------------------
 
     /// <summary>Builds the hamburger menu. Separate from showing it so its items can be inspected.</summary>
     public ContextMenu BuildMenu()
     {
       var menu = new ContextMenu();
+
+      var generate = new ButtonMenuItem { ID = Ids.MenuGenerate, Text = "Generate from Selection" };
+      generate.Click += (s, e) => GenerateFromSelection(allowPicker: true);
+      menu.Items.Add(generate);
+
+      menu.Items.AddSeparator();
 
       var export = new ButtonMenuItem { ID = Ids.MenuExport, Text = "Export List to File" };
       export.Click += (s, e) => ExportListToFile();
@@ -128,11 +178,43 @@ namespace ListModeling.Views
 
       menu.Items.AddSeparator();
 
+      var wrap = new CheckMenuItem { ID = Ids.MenuWrap, Text = "Wrap Words", Checked = WrapWords };
+      wrap.CheckedChanged += (s, e) => WrapWords = wrap.Checked;
+      menu.Items.Add(wrap);
+
+      menu.Items.AddSeparator();
+
       var close = new ButtonMenuItem { ID = Ids.MenuClose, Text = "Close Panel" };
       close.Click += (s, e) => Panels.ClosePanel(PanelId);
       menu.Items.Add(close);
 
       return menu;
+    }
+
+    /// <summary>
+    /// Describes the objects selected in the document and appends the list to the
+    /// embedded list, as the command's GenerateFromSelection route does. Returns the
+    /// appended text, or an empty string when nothing is selected. Never prompts.
+    /// </summary>
+    public string GenerateFromSelection() => GenerateFromSelection(allowPicker: false);
+
+    string GenerateFromSelection(bool allowPicker)
+    {
+      var doc = Document;
+      if (doc == null)
+        return string.Empty;
+
+      var selected = doc.Objects.GetSelectedObjects(false, false).ToList();
+      if (selected.Count > 0)
+        return SelectionListGenerator.AppendToEmbeddedList(doc, selected, echo: false);
+
+      // Nothing selected: the command's own picker asks for objects, unless nobody is
+      // there to answer it.
+      if (allowPicker && !Notifier.SuppressPopups && !RhinoApp.IsRunningAutomated && !RhinoApp.IsRunningHeadless)
+        RhinoApp.RunScript("_ListModeling _GenerateFromSelection", false);
+      else
+        RhinoApp.WriteLine("List Modeling: Nothing is selected; select the objects to describe first.");
+      return string.Empty;
     }
 
     void ExportListToFile()
@@ -260,6 +342,21 @@ namespace ListModeling.Views
         Dialogs.ShowMessage(message, "List Modeling");
     }
 
+    // ---- Line numbers -----------------------------------------------------------
+
+    /// <summary>True when the line numbers can be shown on this platform.</summary>
+    public bool LineNumbersAvailable => _gutter.Available && _gutter.Visible;
+
+    /// <summary>The line numbers of the rows on screen that start a line, top to bottom.</summary>
+    public int[] VisibleLineNumbers() => _gutter.VisibleRows(layoutFirst: true).Select(r => r.Line).ToArray();
+
+    /// <summary>The tops of the same rows, measured from the top of the editor.</summary>
+    public float[] VisibleLineTops() => _gutter.VisibleRows(layoutFirst: true).Select(r => r.Top).ToArray();
+
+    public void ScrollEditorToEnd() => _gutter.ScrollToEnd();
+
+    public void ScrollEditorToStart() => _gutter.ScrollToStart();
+
     // ---- Store sync -------------------------------------------------------------
 
     void OnTextChanged(object sender, EventArgs e)
@@ -294,11 +391,15 @@ namespace ListModeling.Views
       ListStore.TextReplaced -= OnStoreTextReplaced;
       ListStore.TextReplaced += OnStoreTextReplaced;
       RefreshFromStore();
+      _gutter.Start();
     }
 
-    public void PanelHidden(uint documentSerialNumber, ShowPanelReason reason) { }
+    public void PanelHidden(uint documentSerialNumber, ShowPanelReason reason) => _gutter.Stop();
 
     public void PanelClosing(uint documentSerialNumber, bool onCloseDocument)
-      => ListStore.TextReplaced -= OnStoreTextReplaced;
+    {
+      ListStore.TextReplaced -= OnStoreTextReplaced;
+      _gutter.Stop();
+    }
   }
 }

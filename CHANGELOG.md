@@ -5,6 +5,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.0-alpha.1.3.0] - 2026-11-21
+
+### Added
+
+- Steps: several actions under one header run in order on what is selected.
+  `offset` makes a curve beside a selected curve, `extrude` turns selected
+  closed curves into solids (a curve inside another makes a hole),
+  `booleanDifference` cuts the selected solids with others, `copy` and `paste`
+  duplicate the selection in place, `changeLayer` moves it to a layer and
+  `delete` removes it.
+- `value` property: the input a step needs, such as a distance, a layer or
+  the objects to cut with.
+- `select` finds objects by the header that built them, by object name or by
+  layer, as a part or as a step: `select: <name>`. A container's name reaches
+  everything built under it, `group:<id>` reaches a group, and `<name>[n]`
+  picks one object, counting from 0.
+- `deselect` and `deselectAll`.
+- A misspelled action word is reported with the closest known word.
+- Panel: line numbers beside the embedded list (Windows).
+- Panel menu: Wrap Words, remembered between sessions, and Generate from
+  Selection.
+- Unit cases, fixtures with golden baselines, in-Rhino regression and UI
+  cases for all of the above; example list `examples/inlaid-stripe.md`.
+- An on-request test suite that compares the list in `tests/progress.md` with
+  the model in `tests/progress.3dm`.
+
+### Changed
+
+- Two `actions` lines under one header are steps that run in order. The later
+  line used to replace the earlier one.
+- `select`, `deselect` and `value` are read as steps. They used to be kept as
+  unknown properties.
+- A `select` part no longer needs a `LayerName`: without one it selects by its
+  value or by its own header name. It now finds objects of any kind; its closed
+  solids are still the ones the element cuts and merges.
+- "Objects changed" counts only objects that were in the model before the
+  run.
+- A list that selects or deselects leaves its selection showing in the
+  viewport when it ends.
+
 ## [0.0.0-alpha.1.2.0] - 2026-11-01
 
 ### Added

@@ -161,6 +161,14 @@ def malformed_degrades_gracefully(context):
     h.equal(names, ["Bad Everything Else", "Good Part"],
             "only the parts whose values could all be resolved should be built")
 
+    # Two more parse cleanly but fail when they run: a select part by its own name
+    # finds nothing of that name, and a sequence's copy finds nothing selected.
+    summary = context.lm.LastSummary
+    h.contains(summary, "Part 'Select Without Layer' (line 57): nothing is named 'Select Without Layer'",
+               "the select part without a layer selects by its own name")
+    h.contains(summary, "Part 'Value Without Action' (line 78): nothing is selected for 'copy'; the rest of its steps are skipped.",
+               "the copy in a sequence with nothing selected")
+
 
 @SUITE.case("the embedded list is readable and writable from a script")
 def embedded_list_round_trips(context):

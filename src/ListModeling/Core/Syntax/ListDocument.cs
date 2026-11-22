@@ -303,6 +303,36 @@ namespace ListModeling.Core.Syntax
     /// <summary>Keys the parser did not recognize, kept so the writer can round-trip them.</summary>
     public Dictionary<string, string> Extra { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True for a sequence: a header whose own lines hold steps. It builds nothing from
+    /// its own shape; its steps act on what is selected, in order.
+    /// </summary>
+    public bool IsSequence { get; set; }
+
+    /// <summary>A sequence's steps in the order written; empty for any other part.</summary>
+    public List<Step> Steps { get; } = new List<Step>();
+
+    /// <summary>
+    /// A select part's target: what it names, or its own name when it names nothing and
+    /// has no LayerName. Null means it reads its LayerName, as a select part always has.
+    /// </summary>
+    public StepTarget SelectTarget { get; set; }
+
+    /// <summary>
+    /// The header names that own what this part builds, outermost first and ending with its
+    /// own name: the headers it was written under and the ones open around where it is built.
+    /// </summary>
+    public List<string> Path { get; } = new List<string>();
+
+    /// <summary>A sequence's own lines gave it a shape, a size or a position, which steps do not use.</summary>
+    internal bool StepsIgnoreShape { get; set; }
+
+    /// <summary>A sequence's own lines hold an action word that could not be read: the first such line.</summary>
+    internal int UnreadableActionLine { get; set; }
+
+    /// <summary>Words that build a part, written among a sequence's action words, with their lines.</summary>
+    internal List<KeyValuePair<int, string>> StepPartWords { get; } = new List<KeyValuePair<int, string>>();
+
     /// <summary>True once any property line has been applied to this part, including lines from the headers above it.</summary>
     public bool HasProperties { get; set; }
 
@@ -407,10 +437,17 @@ namespace ListModeling.Core.Syntax
         Fillet = Fillet?.Clone(),
         HasProperties = HasProperties,
         HasError = HasError,
+        IsSequence = IsSequence,
+        SelectTarget = SelectTarget,
+        StepsIgnoreShape = StepsIgnoreShape,
+        UnreadableActionLine = UnreadableActionLine,
       };
       copy.RadiusStations.AddRange(RadiusStations);
       copy.Coordinates.AddRange(Coordinates);
       copy.Actions.AddRange(Actions);
+      copy.Steps.AddRange(Steps);
+      copy.Path.AddRange(Path);
+      copy.StepPartWords.AddRange(StepPartWords);
       foreach (var pair in Extra)
         copy.Extra[pair.Key] = pair.Value;
       return copy;

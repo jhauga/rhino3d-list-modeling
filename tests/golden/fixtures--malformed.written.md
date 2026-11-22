@@ -59,3 +59,17 @@
 ## Select Without Layer
 
 - actions: select
+
+## Misspelled Step
+
+- select: Good Part
+
+## Offset Without Value
+
+- select: Good Part
+- actions: offset
+
+## Value Without Action
+
+- actions: copy
+- actions: paste

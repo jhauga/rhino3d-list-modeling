@@ -839,7 +839,7 @@ def select_with_union_keeps_the_object(context):
     h.bbox_equal(_box_of(brep), [898, -2, 0, 902, 2, 2], "plate and boss together", 1e-4)
 
 
-@SUITE.case("select needs a layer with solids on it, and a through cutter needs something to cut")
+@SUITE.case("select needs a layer with objects on it, and a through cutter needs something to cut")
 def select_needs_a_layer_with_solids(context):
     before = context.object_ids()
     ran = context.lm.RunText(
@@ -853,8 +853,214 @@ def select_needs_a_layer_with_solids(context):
     _ensure_layer(context, "Test_Select_Empty")
     ran = context.lm.RunText("# Element: Boolean\n\n## Plate\n\n- LayerName: Test_Select_Empty\n- actions: select\n")
     h.ok(not ran, "an empty layer is an error")
-    h.contains(context.lm.LastSummary, "no visible, unlocked solid on layer 'Test_Select_Empty'", "empty layer")
+    h.contains(context.lm.LastSummary, "no visible, unlocked object on layer 'Test_Select_Empty'; nothing to select.", "empty layer")
     h.equal(len(context.added_since(before)), 0, "nothing is added")
+
+
+# ---- Steps, targets and the selection -------------------------------------------
+
+
+def _objects_on(context, path):
+    index = context.doc.Layers.FindByFullPath(path, -1)
+    if index < 0:
+        return []
+    return list(context.doc.Objects.FindByLayer(context.doc.Layers[index]) or [])
+
+
+def _selected_ids(context):
+    return sorted([str(obj.Id) for obj in context.doc.Objects.GetSelectedObjects(False, False)])
+
+
+@SUITE.case("steps inlay a stripe: a ring cuts the blank round, one copy recesses the knob, the other moves to its layer")
+def steps_inlay(context):
+    ran, added, ids = _build(context, "steps.md")
+    summary = context.lm.LastSummary
+    h.ok(ran, "steps.md reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "steps.md warned: %s" % summary)
+    h.contains(summary, "Objects added: 2", "only the knob and the stripe are left")
+    h.ok("Objects changed" not in summary, "nothing that was in the model before the run is changed: %s" % summary)
+    h.equal(sorted([item["name"] for item in added]), ["Knob", "Stripe"], "objects left by the list")
+
+    knob_id = _id_named(context, ids, "Knob")
+    knob = _brep(context, knob_id)
+    h.ok(knob.IsSolid, "the knob is a closed solid")
+    h.equal(int(knob.Faces.Count), 9, "side, bottom, top, the fillet and five recess faces")
+    h.bbox_equal(_box_of(knob), [1098, -2, 0, 1102, 2, 3], "knob box", 1e-4)
+    h.equal(_layer_path(context, knob_id), "Test_Steps::knob", "knob layer")
+
+    stripe_id = _id_named(context, ids, "Stripe")
+    stripe = _brep(context, stripe_id)
+    h.ok(stripe.IsSolid, "the stripe is a closed solid")
+    h.equal(int(stripe.Faces.Count), 6, "the stripe's top, bottom, straight edge, two short sides and round edge")
+    h.bbox_equal(_box_of(stripe), [1098.8, -1.5, 2.9, 1101.2, -0.6, 3], "stripe box", 1e-4)
+    h.equal(_layer_path(context, stripe_id), "Test_Steps::inlay", "stripe layer")
+
+    # The recess has the stripe's shape: the stripe sits in it, flush with the top.
+    h.ok(not _inside(knob, 1100, -1, 2.95), "the recess is cut where the stripe sits")
+    h.ok(_inside(knob, 1100, -1, 2.85), "the recess floor is at z 2.9")
+    h.ok(_inside(knob, 1100, 0, 2.95), "the top stays outside the recess")
+    h.ok(_inside(stripe, 1100, -1, 2.95), "the stripe is solid in its middle")
+    h.ok(_inside(stripe, 1101.15, -0.7, 2.95), "the stripe keeps its straight sides near its top edge")
+    h.ok(not _inside(stripe, 1101.15, -1.2, 2.95), "the circle trims the stripe's lower corners")
+
+    h.equal(len(_objects_on(context, "Test_Steps::guides")), 0, "no trim curve, ring or scrap is left")
+    h.equal(len(_objects_on(context, "Test_Steps::blank")), 0, "no second stripe is left on the blank layer")
+    h.compare_golden(context, "rhino--steps.json", added)
+
+
+@SUITE.case("select reaches cubes by header, container, group index and layer, and deselect takes some back")
+def selections(context):
+    ran, added, ids = _build(context, "selections.md")
+    summary = context.lm.LastSummary
+    h.ok(ran, "selections.md reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "selections.md warned: %s" % summary)
+    h.contains(summary, "Objects added: 6", "six cubes")
+    h.ok("Objects changed" not in summary, "the cubes were made by this run, so none counts as changed")
+
+    def cube(x):
+        return [x - 0.5, -0.5, 0.0, x + 0.5, 0.5, 1.0]
+
+    expected = sorted([
+        ("Solo", "Test_Selections::own-name", cube(1200.0)),
+        ("Pair Left", "Test_Selections::by-container", cube(1205.0)),
+        ("Pair Right", "Test_Selections::kept", cube(1210.0)),
+        ("Row", "Test_Selections::kept", cube(1215.0)),
+        ("Row", "Test_Selections::by-index", cube(1220.0)),
+        ("Row", "Test_Selections::kept", cube(1225.0)),
+    ])
+    h.equal(_placed(context, ids), expected, "every cube on the layer of the last way it was selected")
+    h.equal(_group_size(context, "row"), 3, "the Rhino group row")
+    h.compare_golden(context, "rhino--selections.json", added)
+
+
+@SUITE.case("a select part finds an object in the model by its object name")
+def select_finds_objects_by_name(context):
+    block_id = _add_box(context, _ensure_layer(context, "Test_By_Name"), "Hand Block", 1300, 1301, 0, 1, 0, 1)
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        "# Element: Boolean\n\n## Hand Block\n\n- actions: select\n\n"
+        "## Move It\n\n- actions: changeLayer\n- value: Test_By_Name::moved\n")
+    summary = context.lm.LastSummary
+    h.ok(ran, "the list reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "the list warned: %s" % summary)
+    h.equal(len(context.added_since(before)), 0, "nothing is added")
+    h.contains(summary, "Objects changed: 1", "the block was in the model before the run")
+
+    block = h.not_none(_object(context, block_id), "the block keeps its object id")
+    h.equal(str(block.Attributes.Name), "Hand Block", "the block keeps its name")
+    h.equal(_layer_path(context, block_id), "Test_By_Name::moved", "the sequence moved what the select part selected")
+
+
+@SUITE.case("offset puts a closed curve outside or inside and an open curve left or right")
+def offset_sides(context):
+    attributes = Rhino.DocObjects.ObjectAttributes()
+    attributes.Name = "Offset Probe Line"
+    line_id = context.doc.Objects.AddLine(
+        Rhino.Geometry.Line(Rhino.Geometry.Point3d(1400, 0, 0), Rhino.Geometry.Point3d(1401, 0, 0)), attributes)
+    attributes = Rhino.DocObjects.ObjectAttributes()
+    attributes.Name = "Offset Probe Circle"
+    circle_id = context.doc.Objects.AddCircle(
+        Rhino.Geometry.Circle(Rhino.Geometry.Point3d(1410, 0, 0), 1), attributes)
+
+    def element(source, header, value):
+        return ("# Element: Boolean\n\n## %s\n\n- actions: select\n\n"
+                "## %s\n\n- actions: offset\n- value: %s\n\n" % (source, header, value))
+
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        element("Offset Probe Line", "Line Left", ".5") +
+        element("Offset Probe Line", "Line Right", "-.5") +
+        element("Offset Probe Circle", "Circle Out", ".25") +
+        element("Offset Probe Circle", "Circle In", "-.25"))
+    summary = context.lm.LastSummary
+    h.ok(ran, "the offset list reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "the offset list warned: %s" % summary)
+    added = context.added_since(before)
+    h.equal(len(added), 4, "one new curve per offset")
+
+    # Seen from the top, left of a line drawn toward +x is +y.
+    h.bbox_equal(h.by_name(added, "Line Left")["bbox"], [1400, 0.5, 0, 1401, 0.5, 0], "a positive offset goes left", 1e-4)
+    h.bbox_equal(h.by_name(added, "Line Right")["bbox"], [1400, -0.5, 0, 1401, -0.5, 0], "a negative offset goes right", 1e-4)
+    h.bbox_equal(h.by_name(added, "Circle Out")["bbox"], [1408.75, -1.25, 0, 1411.25, 1.25, 0], "a positive offset grows a closed curve", 1e-4)
+    h.bbox_equal(h.by_name(added, "Circle In")["bbox"], [1409.25, -0.75, 0, 1410.75, 0.75, 0], "a negative offset shrinks it", 1e-4)
+    for item in added:
+        h.equal(item["type"], "Curve", "%s is a curve" % item["name"])
+
+    h.not_none(_object(context, line_id), "the line is still there")
+    h.not_none(_object(context, circle_id), "the circle is still there")
+
+
+@SUITE.case("steps say what they cannot do, change nothing, and the rest of the list still runs")
+def steps_report_what_they_cannot_do(context):
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        "# Element: Boolean\n\n"
+        "## Report Probe\n\n- LayerName: Test_Step_Reports\n- width: 1\n- height: 1\n- depth: 1\n- position: 1500, 0\n\n"
+        "## Report Curve\n\n- LayerName: Test_Step_Reports\n- shape: circle\n- radius: .5\n- position: 1505, 0\n- actions: curve\n\n"
+        "## Nothing Named\n\n- select: Nobody Has This Name\n- actions: delete\n\n"
+        "## Past The End\n\n- select: Report Probe[3]\n- actions: delete\n\n"
+        "## Offset Nothing\n\n- actions: deselectAll\n- actions: offset\n- value: 1\n\n"
+        "## Cut With A Curve\n\n- select: Report Probe\n- actions: booleanDifference\n- value: Report Curve\n\n"
+        "## Paste First\n\n- actions: paste\n- actions: delete\n\n"
+        "## Still Runs\n\n- select: Report Probe\n- actions: changeLayer\n- value: Test_Step_Reports::moved\n")
+    summary = context.lm.LastSummary
+    h.ok(not ran, "the steps that cannot run are errors")
+
+    h.contains(summary, "Part 'Nothing Named' (line 21): nothing is named 'Nobody Has This Name': no header in this list built it, "
+               "no object in the model has that name, and no layer is called that; the rest of its steps are skipped.",
+               "a target nothing has")
+    h.contains(summary, "Part 'Past The End' (line 26): 'Report Probe' has 1 object, counting from 0; [3] is not one of them; "
+               "the rest of its steps are skipped.", "an index past the end")
+    h.contains(summary, "Part 'Offset Nothing' (line 32): nothing is selected for 'offset'.", "offset with nothing selected")
+    h.contains(summary, "Part 'Cut With A Curve' (line 38): 'Report Curve' holds no closed solid to cut with.",
+               "a cut whose target is only a curve")
+    h.contains(summary, "Part 'Paste First' (line 43): nothing is copied for 'paste'; write 'copy' before it; "
+               "the rest of its steps are skipped.", "paste before copy")
+
+    added = context.added_since(before)
+    h.equal(sorted([item["name"] for item in added]), ["Report Curve", "Report Probe"], "nothing was deleted or made")
+    probe = h.by_name(added, "Report Probe")
+    h.equal(probe["faces"], 6, "the probe was not cut")
+    h.bbox_equal(probe["bbox"], [1499.5, -0.5, 0, 1500.5, 0.5, 1], "the probe stays where it was built")
+    h.equal(probe["layer"], "moved", "the sequence after the failures still ran")
+
+
+@SUITE.case("a step that fails stops its header before the steps after it")
+def a_failed_step_stops_its_header(context):
+    before = context.object_ids()
+    ran = context.lm.RunText(
+        "# Element: Boolean\n\n"
+        "## Stop Probe\n\n- LayerName: Test_Step_Stop\n- width: 1\n- height: 1\n- depth: 1\n- position: 1520, 0\n\n"
+        "## Stop Here\n\n- select: Stop Probe\n- actions: offset\n- value: 1\n- actions: delete\n")
+    summary = context.lm.LastSummary
+    h.ok(not ran, "the failed offset is an error")
+    h.contains(summary, "Part 'Stop Here' (line 14): the selected object is not a curve, which 'offset' needs; "
+               "the rest of its steps are skipped.", "the offset finds no curve")
+    added = context.added_since(before)
+    h.equal([item["name"] for item in added], ["Stop Probe"], "the delete after the failed step never ran")
+
+
+@SUITE.case("a list that selects leaves its selection in the viewport; one that does not leaves the viewport alone")
+def the_run_leaves_its_selection(context):
+    try:
+        before = context.object_ids()
+        ran = context.lm.RunText(
+            "# Element: Boolean\n\n"
+            "## Leave Probe\n\n- LayerName: Test_Step_Selection\n- width: 1\n- height: 1\n- depth: 1\n- position: 1540, 0\n\n"
+            "## Other Probe\n\n- LayerName: Test_Step_Selection\n- width: 1\n- height: 1\n- depth: 1\n- position: 1545, 0\n\n"
+            "## Leave It\n\n- actions: deselectAll\n- select: Leave Probe\n")
+        h.ok(ran, "the selecting list reported errors: %s" % context.lm.LastSummary)
+        probe_id = _id_named(context, context.added_ids_since(before), "Leave Probe")
+        h.equal(_selected_ids(context), [str(probe_id)], "the viewport shows what the list left selected")
+
+        context.select_only([probe_id])
+        ran = context.lm.RunText(
+            "# Element: Boolean\n\n"
+            "## Quiet Probe\n\n- LayerName: Test_Step_Selection\n- width: 1\n- height: 1\n- depth: 1\n- position: 1550, 0\n")
+        h.ok(ran, "the quiet list reported errors: %s" % context.lm.LastSummary)
+        h.equal(_selected_ids(context), [str(probe_id)], "a list without select leaves the viewport's selection as it was")
+    finally:
+        context.doc.Objects.UnselectAll()
 
 
 # ---- Shipped examples -----------------------------------------------------------
@@ -922,3 +1128,34 @@ def plate_with_feet_example(context):
         if object_id != plate_id:
             h.equal(_layer_path(context, object_id), "Shop::Feet", "feet layer path")
     h.equal(_group_size(context, "feet"), 4, "the feet are one Rhino group")
+
+
+@SUITE.case("the inlaid stripe example recesses a knob and leaves the stripe in it")
+def inlaid_stripe_example(context):
+    before = context.object_ids()
+    ran = context.lm.RunText(h.read_text(context.example("inlaid-stripe.md")))
+    added = context.added_since(before)
+    ids = context.added_ids_since(before)
+    summary = context.lm.LastSummary
+    h.ok(ran, "inlaid-stripe.md reported errors: %s" % summary)
+    h.ok("Warnings:" not in summary, "inlaid-stripe.md warned: %s" % summary)
+    h.contains(summary, "Objects added: 2", "the knob and the stripe; the curves, the ring and one copy are used up")
+    h.equal(sorted([item["name"] for item in added]), ["Knob", "Stripe"], "objects left by the example")
+
+    knob_id = _id_named(context, ids, "Knob")
+    knob = _brep(context, knob_id)
+    h.ok(knob.IsSolid, "the knob is a closed solid")
+    h.equal(int(knob.Faces.Count), 9, "side, bottom, top, the fillet and five recess faces")
+    h.bbox_equal(_box_of(knob), [-2, -2, 0, 2, 2, 3], "knob box", 1e-4)
+    h.equal(_layer_path(context, knob_id), "Shop::Knob", "knob layer")
+
+    stripe_id = _id_named(context, ids, "Stripe")
+    stripe = _brep(context, stripe_id)
+    h.ok(stripe.IsSolid, "the stripe is a closed solid")
+    h.equal(int(stripe.Faces.Count), 6, "the stripe is the blank cut round")
+    h.bbox_equal(_box_of(stripe), [-1.2, -1.5, 2.9, 1.2, -0.6, 3], "stripe box", 1e-4)
+    h.equal(_layer_path(context, stripe_id), "Shop::Stripe", "stripe layer")
+
+    h.ok(not _inside(knob, 0, -1, 2.95), "the recess is cut where the stripe sits")
+    h.ok(_inside(stripe, 0, -1, 2.95), "the stripe fills it")
+    h.equal(len(_objects_on(context, "Shop::Guides")), 0, "no trim curve or ring is left")

@@ -9,7 +9,7 @@ list in a file or in the plugin's dockable panel, run it, and the parts appear
 on their layers. Select existing objects and the plugin writes the list for
 you.
 
-Current version: `0.0.0-alpha.1.2.0` (see [CHANGELOG.md](CHANGELOG.md)).
+Current version: `0.0.0-alpha.1.3.0` (see [CHANGELOG.md](CHANGELOG.md)).
 
 ![A board with two mount holes modeled from the example list](docs/assets/banner.gif)
 
@@ -78,9 +78,11 @@ Two commands and a panel:
   it in the panel.
 
 The panel holds an **Embedded List** text area that is saved inside the
-`.3dm`. **Load List** runs a file, **Submit List** runs the text area (through
-a temporary file that is removed afterward), and the menu exports or imports
-the text or closes the panel. Every run ends with a popup:
+`.3dm`, with line numbers beside it. **Load List** runs a file, **Submit List**
+runs the text area (through a temporary file that is removed afterward), and
+the menu generates a list from the selected objects, exports or imports the
+text, switches Wrap Words on or off (remembered between sessions), or closes
+the panel. Every run ends with a popup:
 `Script called from 'List Modeling' is complete`, followed by the object
 count and any warnings.
 
@@ -146,8 +148,17 @@ See [docs/usage.md](docs/usage.md) for the prompts and panel in detail.
   current layer. `Shop::Posts`, `"Shop", "Posts"` and a nested bullet all name
   a layer inside another.
 - `actions` is how the part is made, `extrude`, `curve` or `pipe`, optionally
-  followed by what its solid does, `subtract` or `union`. `select` takes the
-  solids already on the part's layer and edits them in place.
+  followed by what its solid does, `subtract` or `union`. `select` takes
+  objects already in the model, by layer, by header or by object name, and
+  edits its solids in place.
+- Steps run in order on what is selected: a header whose own lines hold
+  `select`, `deselect`, `deselectAll`, `offset`, `extrude`,
+  `booleanDifference`, `copy`, `paste`, `changeLayer` or `delete`, each with
+  the `value` it needs, is a sequence that acts on the selection instead of
+  building a shape.
+- A target names objects for a step: `Knob` is everything the header `Knob`
+  built (a container's name reaches everything under it), `Knob[0]` one of
+  them, `group:<id>` a group, and `Shop::Plate` a layer.
 - `filletEdge` rounds edge loops of an extruded part, one radius per loop or
   edge by edge.
 - `pipe` builds a tube of a given `radius` along the part named by `curve`;
@@ -168,8 +179,10 @@ See [docs/usage.md](docs/usage.md) for the prompts and panel in detail.
 The full reference, including the axis table, the fillet edge order and color
 formats, is in [docs/syntax.md](docs/syntax.md). Complete examples are
 [examples/circuit-board.md](examples/circuit-board.md),
-[examples/filleted-post.md](examples/filleted-post.md) and
-[examples/plate-with-feet.md](examples/plate-with-feet.md).
+[examples/filleted-post.md](examples/filleted-post.md),
+[examples/plate-with-feet.md](examples/plate-with-feet.md) and
+[examples/inlaid-stripe.md](examples/inlaid-stripe.md), which uses steps to
+inlay a stripe in a knob.
 
 A longer walk-through of writing a parts list, with small standalone scripts
 that build one in Rhino and in FreeCAD:

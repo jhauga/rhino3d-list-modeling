@@ -86,7 +86,8 @@ describes them. The model decides the values:
 
 The generated text uses `-` bullets. It is printed to the command line,
 appended to the embedded list, and the panel opens to show it. Values are
-rounded to four decimals in model units.
+rounded to four decimals in model units. The panel menu's
+**Generate from Selection** does the same for the objects already selected.
 
 Generation describes each object's outer extent only. Holes and other
 subtracted features are not inferred, so a board with mount holes comes back
@@ -103,23 +104,38 @@ the Panels menu. It docks and floats like any Rhino panel.
 List Modeling                                            [ ≡ ]
 [ Load List ]
 Embedded List
-+------------------------------------------------------------+
-|                                                            |
-|   (list text)                                              |
-|                                                            |
-+------------------------------------------------------------+
++----+-------------------------------------------------------+
+|  1 | # Element: Boolean                                    |
+|  2 |                                                       |
+|  3 | ## Plate                                              |
+|  4 |                                                       |
+|  5 | - width: 10                                           |
++----+-------------------------------------------------------+
 [ Submit List ]
 ```
 
 - **Load List** picks a `.txt` or `.md` file and runs it immediately.
 - **Embedded List** is a plain text editor. Its content is stored with the
   document and saved inside the `.3dm`, so the list travels with the model.
+- Line numbers stand beside the editor, one per line of the list, blank lines
+  included, level with their lines as the editor scrolls. With Wrap Words on,
+  a long line takes several rows and its number stands at its first row.
 - **Submit List** writes the editor text to a temporary file, runs that file
   through the same loader as Load List, and deletes the temporary file when
   the run finishes.
-- The **≡** menu offers **Export List to File** (save the editor text as
-  `.md` or `.txt`), **Import File to Embedded List** (replace the editor text
-  with a file's content without running it), and **Close Panel**.
+- The **≡** menu offers, in this order:
+  - **Generate from Selection**: describes the objects selected in the model
+    and appends the list to the embedded list, the same way the
+    `GenerateFromSelection` route does. The summary and any diagnostics go to
+    the command line. With nothing selected, it starts the command's own object
+    picker.
+  - **Export List to File**: saves the editor text as `.md` or `.txt`.
+  - **Import File to Embedded List**: replaces the editor text with a file's
+    content without running it.
+  - **Wrap Words**: a check item. When it is checked the editor wraps long
+    lines, so nothing has to be scrolled sideways. The choice is remembered
+    between sessions; it is off at first.
+  - **Close Panel**.
 
 Every run ends with the popup `Script called from 'List Modeling' is
 complete`, followed by the object count and any warnings or errors.
@@ -166,7 +182,17 @@ the group identifier.
 
 A `select` part edits solids that were already in the model. They keep their
 object ids, names, layers and colors, the run's summary counts them as changed,
-and the same undo step restores them.
+and the same undo step restores them. Steps work inside the same undo step.
+
+The summary counts as added what the run made and is still there at the end,
+so construction curves and cutters that steps used up are left out. It counts
+as changed only objects that were in the model before the run and that the
+run edited, moved to another layer or removed.
+
+A run keeps its own selection and starts with it empty. When a list uses
+`select`, `deselect` or `deselectAll`, the viewport shows what the list left
+selected when the run ends; a list without them leaves the viewport's
+selection alone.
 
 ## Known limitations
 
@@ -190,3 +216,10 @@ and the same undo step restores them.
 - `select` reads one layer, not its sublayers, and its solids are always kept;
   cutting with or merging selected solids is planned.
 - Running a list that edits selected solids a second time edits them again.
+- Steps start from an empty selection; starting from what is selected in the
+  viewport is planned.
+- Lists the plugin writes, from GenerateFromSelection or the Steps route,
+  contain no steps.
+- Line numbers in the panel are shown on Rhino for Windows only. Where the
+  editor cannot report its lines, the number column is hidden and the panel
+  works without it.

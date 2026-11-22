@@ -1,5 +1,5 @@
 name: list-modeling
-version: 0.0.0-alpha.1.2.0
+version: 0.0.0-alpha.1.3.0
 authors:
   - John Haugabook
 description: >
@@ -8,9 +8,10 @@ description: >
   pipe, then subtract or union), and can round its edges with fillets;
   elements combine parts with boolean operations, and can cut into solids
   already in the model. Values written on a header reach every part below it,
-  and headers can be reused. Run a list from a file, from the dockable panel's
-  embedded editor, or build one step by step on the command line, and
-  generate a list back from selected objects.
+  and headers can be reused. Steps select objects by header, name or layer
+  and offset, extrude, cut, copy, move or delete them in order. Run a list
+  from a file, from the dockable panel's embedded editor, or build one step by
+  step on the command line, and generate a list back from selected objects.
 keywords:
   - modeling
   - markdown

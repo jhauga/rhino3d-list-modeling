@@ -11,7 +11,7 @@ using System.Runtime.InteropServices;
 [assembly: PlugInDescription(DescriptionType.Icon, "ListModeling.Resources.ListModeling.ico")]
 
 [assembly: AssemblyTitle("ListModeling")]
-[assembly: AssemblyDescription("Model Rhino geometry from a Markdown list of parts: layers, orientation, dimensions, position, fillets, pipes, shared values and boolean actions, including edits to solids already in the model.")]
+[assembly: AssemblyDescription("Model Rhino geometry from a Markdown list of parts: layers, orientation, dimensions, position, fillets, pipes, shared values and boolean actions, including edits to solids already in the model, and steps that act in order on what is selected.")]
 [assembly: AssemblyCompany("John Haugabook")]
 [assembly: AssemblyProduct("List Modeling")]
 [assembly: AssemblyCopyright("Copyright 2026 John Haugabook")]
@@ -31,4 +31,4 @@ using System.Runtime.InteropServices;
 // yak spec reads AssemblyInformationalVersion first, then AssemblyVersion.
 [assembly: AssemblyVersion("0.0.0.0")]
 [assembly: AssemblyFileVersion("0.0.0.0")]
-[assembly: AssemblyInformationalVersion("0.0.0-alpha.1.2.0")]
+[assembly: AssemblyInformationalVersion("0.0.0-alpha.1.3.0")]

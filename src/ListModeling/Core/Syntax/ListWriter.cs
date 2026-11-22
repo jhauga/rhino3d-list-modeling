@@ -49,13 +49,24 @@ namespace ListModeling.Core.Syntax
 
     static void WriteProperties(StringBuilder sb, Part part)
     {
+      if (part.IsSequence)
+      {
+        WriteSequence(sb, part);
+        return;
+      }
+
       if (!string.IsNullOrEmpty(part.LayerName))
         Line(sb, 0, "LayerName: " + LayerText(part.LayerName));
 
       if (part.Generator == PartGenerator.Select)
       {
-        // A select part is the solids already on its layer; nothing else about it is read.
-        Line(sb, 0, "actions: " + ActionsText(part));
+        // A select part is the objects it names, those on its layer, or those of its own
+        // name; nothing else about it is read.
+        var target = part.SelectTarget;
+        if (target != null && !target.OwnName && part.Role == PartRole.Keep)
+          Line(sb, 0, "select: " + target.Text);
+        else
+          Line(sb, 0, "actions: " + ActionsText(part));
         WriteExtra(sb, part);
         return;
       }
@@ -109,6 +120,69 @@ namespace ListModeling.Core.Syntax
         WriteFillet(sb, part.Fillet);
 
       Line(sb, 0, "actions: " + ActionsText(part));
+      WriteExtra(sb, part);
+    }
+
+    /// <summary>
+    /// A sequence: its layer, color and orientation when set, then its steps in order. A
+    /// select or deselect is written with its target, so one that read a LayerName line
+    /// names that layer as a path; every other step is an actions line, with a value line
+    /// when it has one. An extrude always writes its distance.
+    /// </summary>
+    static void WriteSequence(StringBuilder sb, Part part)
+    {
+      if (!string.IsNullOrEmpty(part.LayerName))
+        Line(sb, 0, "LayerName: " + LayerText(part.LayerName));
+      if (!string.IsNullOrEmpty(part.LayerColor))
+        Line(sb, 0, "LayerColor: " + part.LayerColor);
+      if (part.Orientation != Orientation.Top)
+        Line(sb, 0, "orientation: " + part.Orientation.ToString().ToLowerInvariant());
+
+      foreach (var step in part.Steps)
+      {
+        var word = StepWords.Spelling(step.Kind);
+        switch (step.Kind)
+        {
+          case StepKind.Select:
+          case StepKind.Deselect:
+            if (step.Target == null)
+              Line(sb, 0, "actions: " + word);
+            else if (step.Target.OwnName)
+            {
+              // With a LayerName written above it, a bare select would read that layer.
+              if (string.IsNullOrEmpty(part.LayerName))
+                Line(sb, 0, "actions: " + word);
+              else
+                Line(sb, 0, word + ": " + part.Name);
+            }
+            else
+              Line(sb, 0, word + ": " + step.Target.Text);
+            break;
+
+          case StepKind.BooleanDifference:
+            Line(sb, 0, "actions: " + word);
+            if (step.Target != null)
+              Line(sb, 0, "value: " + step.Target.Text);
+            break;
+
+          case StepKind.ChangeLayer:
+            Line(sb, 0, "actions: " + word);
+            if (step.LayerPath != null)
+              Line(sb, 0, "value: " + step.LayerPath);
+            break;
+
+          case StepKind.Offset:
+          case StepKind.Extrude:
+            Line(sb, 0, "actions: " + word);
+            if (step.Distance.HasValue)
+              Line(sb, 0, "value: " + step.Distance.Value);
+            break;
+
+          default:
+            Line(sb, 0, "actions: " + word);
+            break;
+        }
+      }
       WriteExtra(sb, part);
     }
 

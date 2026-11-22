@@ -191,6 +191,8 @@ def layout_is_present(context):
                        "embedded-list", "submit-list"):
         h.ok(driver.exists(control_id), "the panel has no control with id %r" % control_id)
         h.ok(driver.is_visible(control_id), "control %r is not visible" % control_id)
+    # The number column exists everywhere; it hides itself where it cannot work.
+    h.ok(driver.exists("line-numbers"), "the panel has no control with id 'line-numbers'")
 
 
 @SUITE.case("the controls are labelled as the documentation says")
@@ -202,7 +204,7 @@ def labels_match_the_docs(context):
     h.equal(driver.text_of("submit-list"), "Submit List", "submit button")
 
 
-@SUITE.case("the menu offers exactly the three documented items")
+@SUITE.case("the menu offers exactly the five documented items")
 def menu_items(context):
     driver = _driver(context)
     menu = driver.panel.BuildMenu()
@@ -213,9 +215,48 @@ def menu_items(context):
         if text:
             labels.append(str(text))
 
-    h.equal(labels, ["Export List to File",
+    h.equal(labels, ["Generate from Selection",
+                     "Export List to File",
                      "Import File to Embedded List",
+                     "Wrap Words",
                      "Close Panel"], "menu items")
+
+
+def _menu_item(menu, item_id):
+    for item in menu.Items:
+        if str(getattr(item, "ID", "") or "") == item_id:
+            return item
+    raise h.Failure("the menu has no item with id %r" % item_id)
+
+
+def _plugin_setting(name):
+    import System
+    plugin = Rhino.PlugIns.PlugIn.Find(System.Guid("bc495df2-2c09-4174-b7a2-08371188cae7"))
+    return bool(plugin.Settings.GetBool(name, False))
+
+
+@SUITE.case("Wrap Words wraps the editor, shows checked in the menu, and is stored")
+def wrap_words(context):
+    driver = _driver(context)
+    panel = driver.panel
+    editor = driver.locator("embedded-list")
+
+    # The setting lives in the Rhino of whoever runs the suite: put it back.
+    earlier = bool(panel.WrapWords)
+    try:
+        panel.WrapWords = True
+        h.ok(bool(editor.Wrap), "Wrap Words on should make the editor wrap")
+        h.ok(bool(_menu_item(panel.BuildMenu(), "menu-wrap").Checked),
+             "a menu built with Wrap Words on should show the item checked")
+        h.ok(_plugin_setting("PanelWrapWords"), "Wrap Words on should be stored in the plugin settings")
+
+        panel.WrapWords = False
+        h.ok(not bool(editor.Wrap), "Wrap Words off should stop the editor wrapping")
+        h.ok(not bool(_menu_item(panel.BuildMenu(), "menu-wrap").Checked),
+             "a menu built with Wrap Words off should show the item unchecked")
+        h.ok(not _plugin_setting("PanelWrapWords"), "Wrap Words off should be stored in the plugin settings")
+    finally:
+        panel.WrapWords = earlier
 
 
 # ---- The editor and the stored list ----------------------------------------
@@ -340,6 +381,121 @@ def import_missing_file(context):
     driver = _driver(context)
     h.ok(not driver.panel.ImportListFrom(context.fixture("does-not-exist.md")),
          "importing a missing file should report failure")
+
+
+@SUITE.case("Generate from Selection appends the selected objects to the embedded list")
+def generate_from_selection(context):
+    driver = _driver(context)
+    panel = driver.panel
+    driver.fill("embedded-list", SAMPLE_LIST)
+
+    before = context.object_ids()
+    h.ok(context.lm.RunText(SAMPLE_LIST), "the sample list should build")
+    built = context.added_ids_since(before)
+    h.equal(len(built), 1, "the sample list should add one solid")
+
+    try:
+        context.select_only(built)
+        text = str(panel.GenerateFromSelection())
+        h.contains(text, "## Panel Probe", "the generated text should hold the part's header")
+        stored = str(context.lm.GetEmbeddedList())
+        h.ok(stored.rstrip().endswith(text.rstrip()),
+             "the generated text should be appended at the end of the stored list")
+        h.ok(stored.startswith(SAMPLE_LIST.rstrip()),
+             "the list that was there should be kept in front of the generated text")
+
+        context.doc.Objects.UnselectAll()
+        unchanged = str(context.lm.GetEmbeddedList())
+        h.equal(str(panel.GenerateFromSelection()), "",
+                "with nothing selected nothing should be generated")
+        h.equal(str(context.lm.GetEmbeddedList()), unchanged,
+                "with nothing selected the stored list should not change")
+    finally:
+        context.doc.Objects.UnselectAll()
+
+
+# ---- Line numbers -----------------------------------------------------------
+
+
+def _raise_panel():
+    """The editor has no layout while its tab is not the selected one."""
+    try:
+        Rhino.UI.Panels.OpenPanel(_guid(PANEL_ID), True)
+    except Exception:
+        pass
+    _pump()
+
+
+def _pump(times=8):
+    for _ in range(times):
+        try:
+            Rhino.RhinoApp.Wait()
+        except Exception:
+            break
+
+
+def _gaps(tops):
+    return [tops[i + 1] - tops[i] for i in range(len(tops) - 1)]
+
+
+@SUITE.case("the line numbers stand level with their lines when scrolled and wrapped")
+def line_numbers(context):
+    driver = _driver(context)
+    panel = driver.panel
+    if not panel.LineNumbersAvailable:
+        context.log("        (skipped: the line numbers are not available on this platform)")
+        return
+
+    earlier_wrap = bool(panel.WrapWords)
+    try:
+        panel.WrapWords = False
+        _raise_panel()
+
+        lines = ["- line %d" % (i + 1) for i in range(120)]
+        driver.fill("embedded-list", "\n".join(lines))
+        _pump()
+        panel.ScrollEditorToStart()
+        _pump()
+
+        numbers = list(panel.VisibleLineNumbers())
+        tops = list(panel.VisibleLineTops())
+        if not numbers:
+            context.log("        (skipped: the editor had no layout inside the harness)")
+            return
+
+        h.equal(numbers[0], 1, "the first visible number at the top of the list")
+        h.equal(numbers, list(range(numbers[0], numbers[0] + len(numbers))),
+                "the visible numbers should be consecutive")
+        h.ok(len(numbers) > 3, "more than three lines should be visible, got %d" % len(numbers))
+        gaps = _gaps(tops)
+        h.ok(gaps[0] > 0, "the tops should rise from line to line: %r" % tops)
+        for gap in gaps:
+            h.close(gap, gaps[0], "every unwrapped line should take the same height", 0.5)
+
+        panel.ScrollEditorToEnd()
+        _pump()
+        numbers = list(panel.VisibleLineNumbers())
+        h.ok(numbers, "after scrolling to the end some numbers should be visible")
+        h.equal(numbers[-1], 120, "the last visible number after scrolling to the end")
+        h.ok(numbers[0] > 1, "after scrolling to the end the first visible number should not be 1")
+        h.equal(numbers, list(range(numbers[0], numbers[0] + len(numbers))),
+                "the visible numbers should still be consecutive after scrolling")
+
+        panel.WrapWords = True
+        driver.fill("embedded-list", "- short\n- " + ("x" * 400) + "\n- short")
+        _pump()
+        panel.ScrollEditorToStart()
+        _pump()
+        numbers = list(panel.VisibleLineNumbers())
+        tops = list(panel.VisibleLineTops())
+        h.equal(numbers, [1, 2, 3], "a wrapped line keeps one number")
+        gaps = _gaps(tops)
+        h.ok(gaps[1] >= 1.5 * gaps[0],
+             "the wrapped line should push line 3 down: gaps %r" % gaps)
+
+        driver.screenshot("panel-line-numbers.png")
+    finally:
+        panel.WrapWords = earlier_wrap
 
 
 # ---- Visual artifact --------------------------------------------------------

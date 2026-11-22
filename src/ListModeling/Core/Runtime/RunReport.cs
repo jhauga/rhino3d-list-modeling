@@ -16,7 +16,11 @@ namespace ListModeling.Core.Runtime
     /// <summary>File name or label of the list that was run.</summary>
     public string Source { get; }
 
-    /// <summary>Every object the run added to the document.</summary>
+    /// <summary>
+    /// Every object the run added to the document that is still there when it ends. An
+    /// object the run made and then removed (a construction curve, a cutter used by a step,
+    /// a curve that became a solid) is taken out again, so this is what a person sees.
+    /// </summary>
     public List<Guid> CreatedIds { get; } = new List<Guid>();
 
     /// <summary>
@@ -26,8 +30,9 @@ namespace ListModeling.Core.Runtime
     public List<Guid> BaseIds { get; } = new List<Guid>();
 
     /// <summary>
-    /// Objects that were already in the model and that the run edited in place through a
-    /// select part, or merged into another one and removed.
+    /// Objects that were in the model before the run and that the run changed: edited in
+    /// place through a select part or a step, moved to another layer, or removed. An object
+    /// the same run created is never counted as changed. Each object is listed once.
     /// </summary>
     public List<Guid> ModifiedIds { get; } = new List<Guid>();
 

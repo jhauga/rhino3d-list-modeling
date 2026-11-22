@@ -13,7 +13,8 @@ the results, so the launcher reads the report.
 Environment variables:
     LISTMODELING_TESTS_DIR      the tests folder (falls back to this file's location)
     LISTMODELING_RHP            the .rhp to load when it is not registered yet
-    LISTMODELING_SUITES         comma separated: smoke, regression, ui (default all)
+    LISTMODELING_SUITES         comma separated: smoke, regression, ui, progress
+                                (default smoke, regression, ui; progress only when named)
     LISTMODELING_UPDATE_GOLDEN  set to 1 to rewrite golden files instead of comparing
 """
 
@@ -119,9 +120,11 @@ def main():
         import lm_smoke
         import lm_regression
         import lm_ui
+        import lm_progress
         modules["smoke"] = lm_smoke.SUITE
         modules["regression"] = lm_regression.SUITE
         modules["ui"] = lm_ui.SUITE
+        modules["progress"] = lm_progress.SUITE
 
         for name in selected_suites():
             if name not in modules:

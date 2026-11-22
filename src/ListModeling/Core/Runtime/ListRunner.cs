@@ -20,11 +20,19 @@ namespace ListModeling.Core.Runtime
   ///   extruded solids while their edges are still the ones the list describes, and each
   ///   solid then plays its role: kept, merged into the kept solids (union), or cut out of
   ///   every kept solid it reaches (subtract). A "through" cutter is sized once the kept
-  ///   solids are known. Selected solids are edited in place, keeping their object ids.
+  ///   solids are known. A select part reads the objects it names instead of building;
+  ///   selected solids are edited in place, keeping their object ids.
   ///   Surface element types (Loft, Revolve, ...) are planned; for now they produce the
   ///   profile curves so the surface step can be finished by hand.
+  ///   Then the element's sequences run, top to bottom: steps that act on the run's own
+  ///   selection (see ListRunner.Steps.cs). The selection is emptied at every element.
+  ///
+  /// The runner keeps which objects each header owns, so a target can name them: what a
+  /// part adds belongs to its name and to every header above it, and a group's parts to
+  /// "group:id". The report counts as added what the run made and is still there, and as
+  /// changed only objects that were in the model before the run.
   /// </summary>
-  public sealed class ListRunner
+  public sealed partial class ListRunner
   {
     readonly RhinoDoc _doc;
     readonly double _tolerance;
@@ -83,6 +91,7 @@ namespace ListModeling.Core.Runtime
           RunElement(element, report, groups);
 
         ApplyGroups(groups, report);
+        ShowSelection();
       }
       catch (Exception ex)
       {
@@ -152,7 +161,7 @@ namespace ListModeling.Core.Runtime
       {
         foreach (var part in element.Parts)
         {
-          if (!MakesCurve(part, element.Family) || _prebuilt.ContainsKey(part))
+          if (part.IsSequence || !MakesCurve(part, element.Family) || _prebuilt.ContainsKey(part))
             continue;
           var built = BuildPart(part, element.Family, report);
           _prebuilt[part] = built;
@@ -179,9 +188,15 @@ namespace ListModeling.Core.Runtime
       var cutters = new List<Built>();
       var selected = new HashSet<Guid>();
       _replaced.Clear();
+      ClearSelection();
+      _copied.Clear();
 
       foreach (var part in element.Parts)
       {
+        // Sequences act on the element's parts as they stand once every boolean is done.
+        if (part.IsSequence)
+          continue;
+
         if (part.Generator == PartGenerator.Select)
         {
           if (!part.HasError)
@@ -255,7 +270,11 @@ namespace ListModeling.Core.Runtime
       // Selected objects that a union merged into another one are gone from the model now.
       foreach (var id in consumed)
         if (_doc.Objects.Delete(id, true))
-          report.ModifiedIds.Add(id);
+          Removed(report, id);
+
+      foreach (var part in element.Parts)
+        if (part.IsSequence)
+          RunSequence(part, report);
     }
 
     /// <summary>
@@ -440,37 +459,32 @@ namespace ListModeling.Core.Runtime
       && a.Min.Z <= b.Max.Z && b.Min.Z <= a.Max.Z;
 
     /// <summary>
-    /// Every closed solid on exactly the part's layer that a person could select: visible,
-    /// unlocked, on a visible, unlocked layer. Extrusions are read as breps. An object two
-    /// select parts of one element both name is read once.
+    /// What a select part names (see Find): by its target, by its LayerName, or by its own
+    /// name. Everything found joins the run's selection and is owned by the part; its
+    /// closed solids, extrusions read as breps, become kept solids of the element. An
+    /// object two select parts of one element both name is read once.
     /// </summary>
     List<Built> SelectSolids(Part part, RunReport report, HashSet<Guid> selected)
     {
       var solids = new List<Built>();
-      int layerIndex = FindLayer(part.LayerName);
-      if (layerIndex < 0)
+      var target = part.SelectTarget ?? StepTarget.FromLayer(part.LayerName);
+      var found = Find(target, "select", out var problem);
+      if (found == null)
       {
-        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): no layer '{part.LayerName}' in the model; nothing to select.");
+        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): {problem}.");
         return solids;
       }
 
-      var settings = new ObjectEnumeratorSettings
-      {
-        LayerIndexFilter = layerIndex,
-        ObjectTypeFilter = ObjectType.Brep | ObjectType.Extrusion,
-        NormalObjects = true,
-        LockedObjects = false,
-        HiddenObjects = false,
-        DeletedObjects = false,
-      };
-
+      _usedSelection = true;
       bool readBefore = false;
-      foreach (var obj in _doc.Objects.GetObjectList(settings))
+      foreach (var id in found)
       {
-        if (!obj.IsSelectable(true, true, false, false))
-          continue;
-        var brep = obj.Geometry is Extrusion extrusion ? extrusion.ToBrep(true) : (obj.Geometry as Brep)?.DuplicateBrep();
-        if (brep == null || !brep.IsSolid)
+        Own(part, id);
+        Select(id);
+
+        var obj = _doc.Objects.FindId(id);
+        var brep = SolidOf(obj);
+        if (brep == null)
           continue;
         if (!selected.Add(obj.Id))
         {
@@ -478,8 +492,6 @@ namespace ListModeling.Core.Runtime
           continue;
         }
 
-        if (brep.SolidOrientation == BrepSolidOrientation.Inward)
-          brep.Flip();
         solids.Add(new Built
         {
           Part = part,
@@ -494,9 +506,20 @@ namespace ListModeling.Core.Runtime
 
       if (readBefore)
         report.Messages.Add($"Part '{part.DisplayName}' (line {part.Line}): solids another select part of this element already read are read once.");
-      else if (solids.Count == 0)
-        report.Errors.Add($"Part '{part.DisplayName}' (line {part.Line}): no visible, unlocked solid on layer '{part.LayerName}'; nothing to select.");
       return solids;
+    }
+
+    /// <summary>A copy of an object's closed solid, facing outward; null for anything that is not a closed solid.</summary>
+    static Brep SolidOf(RhinoObject obj)
+    {
+      if (obj == null)
+        return null;
+      var brep = obj.Geometry is Extrusion extrusion ? extrusion.ToBrep(true) : (obj.Geometry as Brep)?.DuplicateBrep();
+      if (brep == null || !brep.IsSolid)
+        return null;
+      if (brep.SolidOrientation == BrepSolidOrientation.Inward)
+        brep.Flip();
+      return brep;
     }
 
     // ---- Parts --------------------------------------------------------------
@@ -719,9 +742,8 @@ namespace ListModeling.Core.Runtime
         report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused the solid.");
         return;
       }
-      report.CreatedIds.Add(id);
-      if (isBase)
-        report.BaseIds.Add(id);
+      Created(report, id, isBase);
+      Own(built.Part, id);
       Remember(groups, built.Part, id);
     }
 
@@ -739,8 +761,8 @@ namespace ListModeling.Core.Runtime
           report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused to replace the selected object {built.SourceId}.");
           return;
         }
-        report.ModifiedIds.Add(built.SourceId);
-        if (isBase)
+        Changed(report, built.SourceId);
+        if (isBase && !report.BaseIds.Contains(built.SourceId))
           report.BaseIds.Add(built.SourceId);
         return;
       }
@@ -751,9 +773,10 @@ namespace ListModeling.Core.Runtime
         report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused the solid.");
         return;
       }
-      report.CreatedIds.Add(id);
-      if (isBase)
-        report.BaseIds.Add(id);
+      Created(report, id, isBase);
+      // A further piece of a cut belongs to the headers of the solid it came from.
+      OwnLike(built.SourceId, id);
+      SelectBeside(built.SourceId, id);
     }
 
     void AddCurve(Built built, RunReport report, Dictionary<string, List<Guid>> groups)
@@ -764,7 +787,8 @@ namespace ListModeling.Core.Runtime
         report.Errors.Add($"Part '{built.Part.DisplayName}' (line {built.Part.Line}): Rhino refused the curve.");
         return;
       }
-      report.CreatedIds.Add(id);
+      Created(report, id, false);
+      Own(built.Part, id);
       Remember(groups, built.Part, id);
     }
 
@@ -784,6 +808,8 @@ namespace ListModeling.Core.Runtime
     {
       foreach (var pair in groups)
       {
+        // A step may have removed a grouped part since it was built.
+        pair.Value.RemoveAll(id => _doc.Objects.FindId(id) == null);
         if (pair.Value.Count == 0)
           continue;
         var existing = _doc.Groups.FindName(pair.Key);
@@ -804,12 +830,16 @@ namespace ListModeling.Core.Runtime
     /// default.
     /// </summary>
     int ResolveLayer(Part part, RunReport report)
+      => ResolveLayer(part.LayerName, part.LayerColor, part, report);
+
+    /// <summary>The same for a layer a step names, colored with the header's LayerColor when it is created.</summary>
+    int ResolveLayer(string layerName, string layerColor, Part part, RunReport report)
     {
-      var segments = LayerSegments(part.LayerName);
+      var segments = LayerSegments(layerName);
       if (segments.Length == 0)
         return _doc.Layers.CurrentLayerIndex;
 
-      int existing = FindLayer(part.LayerName);
+      int existing = FindLayer(layerName);
       if (existing >= 0)
         return existing;
 
@@ -831,12 +861,12 @@ namespace ListModeling.Core.Runtime
         }
 
         var layer = new Layer { Name = segments[level], ParentLayerId = parentId };
-        if (last && !string.IsNullOrWhiteSpace(part.LayerColor))
+        if (last && !string.IsNullOrWhiteSpace(layerColor))
         {
-          if (ColorParser.TryParse(part.LayerColor, out Color color))
+          if (ColorParser.TryParse(layerColor, out Color color))
             layer.Color = color;
           else
-            report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): color '{part.LayerColor}' not recognized; layer uses the default color.");
+            report.Warnings.Add($"Part '{part.DisplayName}' (line {part.Line}): color '{layerColor}' not recognized; layer uses the default color.");
         }
 
         index = _doc.Layers.Add(layer);

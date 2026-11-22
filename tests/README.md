@@ -1,7 +1,7 @@
 # Tests
 
-Four suites, ordered by how much they need to run and by how early they should
-fail.
+Four everyday suites, ordered by how much they need to run and by how early they
+should fail, and one that runs on request.
 
 | Suite | Runs in | Needs Rhino | What it proves |
 | --- | --- | --- | --- |
@@ -9,14 +9,16 @@ fail.
 | `smoke` | Rhino | yes | The plugin loads, registers and does its headline actions |
 | `regression` | Rhino | yes | Fixture geometry matches hand worked numbers and golden files |
 | `ui` | Rhino | yes | The panel behaves when driven by control id, click and keystroke |
+| `progress` | Rhino, on request | yes | `tests/progress.md` builds the module that `tests/progress.3dm` holds |
 
 ## Running them
 
 ```powershell
-powershell -File tests\run-tests.ps1                    # everything
+powershell -File tests\run-tests.ps1                    # the four everyday suites
 powershell -File tests\run-tests.ps1 -Suite unit        # fast, no Rhino
 powershell -File tests\run-tests.ps1 -Suite rhino       # smoke, regression and ui
 powershell -File tests\run-tests.ps1 -Suite ui -SkipBuild
+powershell -File tests\run-tests.ps1 -Suite progress    # only when named
 ```
 
 The unit suite also runs on its own through the normal .NET tooling:
@@ -38,7 +40,7 @@ checks assume an inch document and say so when the assumption breaks.
 
 ```text
 tests/
-  run-tests.ps1                 one entry point for all four suites
+  run-tests.ps1                 one entry point for every suite
   ListModeling.Syntax.Tests/    xUnit project, compiles the syntax layer directly
   fixtures/                     lists the in-Rhino suites build
   golden/                       checked-in baselines
@@ -67,6 +69,8 @@ regression suite.
 | `axis-positions.md` | `x-position`, `y-position` and `z-position` on every orientation, the nearest line winning, a negative depth, squares |
 | `through-cuts.md` | `depth: through` cutters across two stacked solids and along a side axis |
 | `global-properties.md` | Values set on headers several levels up, a selected solid edited in place, and pads cut, then rebuilt as solids |
+| `steps.md` | Steps under one header: a curve offset into a ring, the ring cutting a blank round, a copy pasted, one copy recessed into a knob, the other moved to its own layer, and a scrap curve deleted |
+| `selections.md` | Every way to select and deselect: by header, by container, by group index, by layer, a select part by its own name, each ending on a layer named after the way it was reached |
 
 The Rhino models in `.support/3d-examples/` were drawn by hand to show what the
 fillet, pipe and groove fixtures should look like. They are references to open
@@ -74,11 +78,35 @@ beside a result and compare by eye, not baselines: their sizes differ slightly
 from the fixture numbers, and no test reads them.
 
 `tests/progress.3dm` is the module model the plugin is being built toward, so it
-stays here until the plugin is published. It is a visual reference that no
-suite opens. Its board does not sit where the fixture's numbers expect, so
-`global-properties.md` brings its own board instead: its case draws a 2 by 1 by
-.1 box centered on the origin on the board layer before the run, the way a
-board already in a model would be.
+stays here until the plugin is published. It is read only: no suite opens it as
+a document, changes it or saves over it, and no everyday suite reads it at all.
+The fixtures bring their own geometry instead; `global-properties.md`, for
+example, draws a 2 by 1 by .1 box centered on the origin on the board layer
+before its run, the way a board already in a model would be.
+
+`tests/progress.md` is the list meant to build that model from an empty inch
+document. The `progress` suite, run with `-Suite progress`, compares the two:
+
+- it reads the model from disk with `File3dm.Read` and takes every brep,
+  extrusion and curve on a visible layer, parents included, so hidden backup
+  and support layers drop out without being named;
+- it runs the list at the model's own absolute tolerance (0.001) and restores
+  the document's tolerance afterward;
+- it pairs each model object with one built object on the same layer path whose
+  bounding box agrees within 0.001, then compares solidity, face count and
+  volume (within 1 percent), the color of every layer that holds objects, and
+  the names and sizes of Rhino groups;
+- it fails on a model object with no partner and on a built object with none,
+  which is how construction geometry left behind shows up;
+- a short table of known differences in `lm_progress.py` lets a named layer
+  differ in face count, each entry with its reason; object names are not
+  compared;
+- it writes the comparison to `tests/artifacts/progress-compare.txt`.
+
+The model is edited by hand between releases, which is why neither `all` nor
+`rhino` includes this suite: a model that moved ahead of its list should not
+fail the everyday run. When the model gains a part, extend the list and run the
+suite.
 
 Most cases run at the inch template's absolute tolerance of 0.01. The grooved
 part in `sequenced-actions.md` is cut by a pipe only 0.01 thick, and the pockets
@@ -170,7 +198,9 @@ from both sides:
 
 `tests/fixtures/malformed.md` contains both kinds. The smoke suite asserts that
 exactly the two parts whose values all resolve are built, and that the others
-are skipped with their errors reported.
+are skipped with their errors reported. Two of its parts parse cleanly and fail
+only when the list runs: a select part that finds nothing of its own name, and a
+sequence whose `copy` finds nothing selected.
 
 ## Manual checks
 
@@ -180,7 +210,7 @@ Two things the automated suites cannot reach. Both belong in a release check.
   running, so `doc.Undo()` and the `_Undo` command are both no-ops inside the
   harness and a test there would pass no matter what the plugin did. Check by
   hand that one run undoes in one step, including a run whose `select` part
-  edited a solid already in the model.
+  edited a solid already in the model and a run with steps.
 - **File dialogs.** Load List, Export List to File and Import File to Embedded
   List each open a native OS dialog that cannot be driven in process. The suites
   cover everything behind those dialogs by calling `RunListFile`,

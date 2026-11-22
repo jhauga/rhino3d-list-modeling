@@ -9,7 +9,7 @@ Until then, the plugin is developed against one complete model, the
 electronics module in `tests/progress.3dm`. Each release adds the syntax that
 the module's next parts need.
 
-## Current state: 0.0.0-alpha.1.2.0
+## Current state: 0.0.0-alpha.1.3.0
 
 The simple use case works end to end: a list of rectangular, round, elliptic
 or polygonal parts with an orientation, dimensions, a position and an action
@@ -28,8 +28,17 @@ depth and a value on a container reaches every part below it. A header written
 again continues or rebuilds what it named, and group references build a
 group's parts again in another element with the values of their new place.
 Squares, world coordinates, negative depths, through cuts and the `select`
-action, which edits solids already in the model in place, come with it. Treat
-every build as experimental.
+action, which edits solids already in the model in place, come with it.
+
+The fourth alpha lets a header hold steps as well as describe a part: actions
+that run in order on what is selected, the way a person works in Rhino. A list
+can select objects by the header that built them, by object name or by layer,
+then offset curves, extrude them into solids with holes, cut solids with other
+solids, copy and paste, move objects to a layer and delete construction
+geometry. With steps, the module's board and both of its capacitors are built
+from a list on an empty document, and an on-request test suite compares that
+list with the model. The panel gains line numbers, a Wrap Words switch and
+Generate from Selection in its menu. Treat every build as experimental.
 
 ## Expanding the syntax
 
@@ -112,8 +121,9 @@ panel stays open. The contract is written down in
 2. First pre-release package on the yak test server; confirm the `rh8` tag.
 3. Verify fillets and pipes by eye beside the reference models, then add
    Steps prompts for them.
-4. Rebuild the module in `tests/progress.3dm` from lists, part by part,
-   starting with its board.
+4. Rebuild the module in `tests/progress.3dm` from lists, part by part. The
+   board and both capacitors are built from `tests/progress.md`; the other
+   components follow as the model gains them.
 5. Surface elements, starting with `Loft` via `offset`.
 6. Tooling: `chamferEdge` and `blendEdge`, on the `filletEdge` pattern.
 7. Sibling integration with `rhino3d-markdown-notes`.

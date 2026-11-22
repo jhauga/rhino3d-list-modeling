@@ -5,9 +5,12 @@ Warning (line 27): Position needs two values, got '3'; using 0, 0.
 Warning (line 28): Unknown action 'sculpt' ignored.
 Info (line 29): Unknown property 'material' kept but not used.
 Error (line 63): No group 'nowhere' is written before line 63.
+Warning (line 68): Unknown action 'deselctAll' ignored. Did you mean 'deselectAll'?
+Warning (line 77): A value line needs an action above it; 'value: 3' is ignored.
 Warning (line 1): Unknown element type 'Sculpt'; parts are built as solids.
 Error (line 3): Part 'Missing Depth' is missing: depth.
 Error (line 11): Part 'Unreadable Number' is missing: height.
 Error (line 31): Part 'Zero Depth' has a zero or negative dimension.
 Error (line 49): Part 'Through Without Cut': depth 'through' only applies to subtract parts.
-Error (line 57): Part 'Select Without Layer': select needs a LayerName naming the layer to read.
+Error (line 65): Part 'Misspelled Step': an action on line 68 could not be read, so none of its steps run.
+Error (line 73): Part 'Offset Without Value': 'offset' needs a value, the distance to offset by.

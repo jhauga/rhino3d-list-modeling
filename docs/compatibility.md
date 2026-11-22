@@ -109,6 +109,9 @@ object is not reachable.
 - A part the parser reports an error for is skipped rather than built wrong, so
   a note containing a half written list produces the parts that are complete
   and reports the rest.
+- A list without `select`, `deselect` or `deselectAll` leaves the viewport's
+  selection as it was. A list that uses them leaves its own selection showing
+  when the run ends.
 
 ## Open points for the notes side
 

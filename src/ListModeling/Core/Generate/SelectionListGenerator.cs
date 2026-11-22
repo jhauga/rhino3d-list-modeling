@@ -28,6 +28,33 @@ namespace ListModeling.Core.Generate
     public static string GenerateText(RhinoDoc doc, IEnumerable<RhinoObject> objects)
       => ListWriter.Write(Generate(doc, objects));
 
+    /// <summary>
+    /// Describes the objects and appends the list to the document's embedded list. The
+    /// diagnostics and a summary line go to the command line; with echo the list is
+    /// written there too, line by line. Returns the appended text, or an empty string
+    /// when nothing could be described. The command route and the panel menu share it.
+    /// </summary>
+    public static string AppendToEmbeddedList(RhinoDoc doc, IEnumerable<RhinoObject> objects, bool echo)
+    {
+      var list = Generate(doc, objects);
+      foreach (var d in list.Diagnostics)
+        RhinoApp.WriteLine("List Modeling: " + d);
+
+      if (list.Elements.Count == 0)
+        return string.Empty;
+
+      var text = ListWriter.Write(list);
+      ListStore.AppendText(doc.RuntimeSerialNumber, text);
+
+      if (echo)
+      {
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+          RhinoApp.WriteLine(line);
+      }
+      RhinoApp.WriteLine($"List Modeling: described {list.AllParts.Count()} part(s); added to the embedded list.");
+      return text;
+    }
+
     public static ListDocument Generate(RhinoDoc doc, IEnumerable<RhinoObject> objects)
     {
       var list = new ListDocument();

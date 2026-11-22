@@ -15,7 +15,7 @@ test cannot reach from inside a running script, plus the routes that prompt.
 - [ ] Verify the `Import` route on a millimeter document
 - [ ] Compare the fillet, pipe and groove fixtures by eye with the models in `.support/3d-examples/`
 - [ ] Compare the global properties fixture by eye with the board in `tests/progress.3dm` (the board there sits at other heights, so compare topology only)
-- [ ] Rebuild the board of `tests/progress.3dm` from a list at the model's own sizes and heights
+- [x] Rebuild the board of `tests/progress.3dm` from a list at the model's own sizes and heights
 - [ ] Verify by hand that one undo restores a solid edited through `select`
 - [ ] Verify the `Steps` route end to end, including the `Command` and `Input` follow-ups for BooleanDifference
 - [ ] Verify one undo step per run by hand (undo is a no-op inside the test harness)
@@ -23,6 +23,9 @@ test cannot reach from inside a running script, plus the routes that prompt.
 - [ ] Verify the embedded list saves into the `.3dm` and restores when the file reopens
 - [ ] Verify `GenerateFromSelection` on meshes and on rotated geometry
 - [ ] Record verification results in the roadmap
+- [ ] Check the panel's line numbers by eye: scrolled, wrapped, docked narrow and floating wide, and in Rhino's dark mode
+- [ ] Verify by hand that one undo restores the model after a list with steps
+- [ ] Add the next components of `tests/progress.3dm` to `tests/progress.md` as the model gains them, and run `-Suite progress`
 
 ## Found Issues
 
@@ -35,6 +38,8 @@ Known rough edges observed in the current build.
 - [ ] A `LayerName` on an existing layer never updates that layer's color, even when the list gives one
 - [x] Nested layer paths (`Parent::Child`) are treated as a flat layer name
 - [ ] RhinoCommon 8.0.23304.9001 restores through the net48 fallback (NU1701 suppressed); evaluate a newer package with a proper net8.0 lib
+- [ ] `filletEdge` cannot reach edges made by a cut, so one shell in `tests/progress.3dm` has two small fillets its list cannot make
+- [ ] A list colors only the layer it builds on; parent layers it creates keep Rhino's default color
 
 ## Improvements
 
@@ -51,15 +56,26 @@ Known rough edges observed in the current build.
 - [ ] Verify and polish behavior on Rhino for Mac
 - [ ] An `inherit` value that drops a header's own value so the header above it shows through (an empty value resets to the default instead)
 - [ ] Group selectors with lists, ranges and counting from the end: `[0, 2]`, `[1-3]`, `[-1]`
-- [ ] Written lists keep containers, repeated headers and group references instead of writing every part out in full
+- [ ] Written lists keep containers, repeated headers and group references instead of writing every part out in full, so a target that names a container still finds it in a written list
 - [ ] Suggest the closest element type when one is misspelled (`Boolen` for `Boolean`)
-- [ ] `select` by object name and across sublayers
+- [x] `select` by header and by object name
+- [ ] `select` across the sublayers of a layer
 - [ ] `select, subtract` and `select, union`, and `select` in `BooleanUnion` elements
 - [ ] `filletEdge` on solids read with `select`
 - [ ] GenerateFromSelection writes `square` for equal sides and `depth: through` for holes that pass all the way through
 - [ ] Steps route: prompts for `square`, world coordinates, `through` and `select`
 - [ ] Panel: show where each value of a part comes from (its definition, the place it is rebuilt in, the element)
 - [ ] Tune the thin-part warning (now under twice the model tolerance) against more models, and say which size of the part it means
+- [ ] `filletEdge` as a step on selected solids, with a way to name edges made by a cut
+- [ ] More steps: `booleanUnion`, `move`, `rotate`, `mirror`, `scale`
+- [ ] `select: current` to start from what is selected in the viewport
+- [ ] `extrude` as a step on open curves, giving surfaces
+- [ ] A way to name a layer and its color without building on it
+- [ ] Suggest the closest word for a misspelled property (action words have it)
+- [ ] Panel: line numbers on Rhino for Mac
+- [ ] Panel: follow the editor's scrolling through an event instead of a timer
+- [ ] Panel: jump to the line a warning or error names
+- [ ] GenerateFromSelection and the Steps route for sequences
 
 ## New Ideas
 
@@ -77,11 +93,15 @@ Known rough edges observed in the current build.
 - [ ] A group reference with a transform (`mirror: z`, `move: 0, 0, 1`) to place a copy of a group, such as the same pads on the other face
 - [ ] `include:` another list file so shared definitions live in one place
 - [ ] Partial through cuts: `depth: through-first` (stop at the first solid) and `depth: to <part>`
+- [ ] A `command` step that runs any Rhino command with typed input, for what the syntax does not cover
+- [ ] `as: <name>` on a step, to name what it makes
+- [ ] Steps on a group reference, so one sequence runs for each part of a group
+- [ ] A dry run that lists what each step would select and change
 
 ## Documentation
 
 - [ ] Add a screenshot of the panel and the Steps prompts to docs/usage.md
-- [ ] Write docs/architecture.md (syntax layer without Rhino dependency, runner, generator, and how definitions, repeats and group references resolve)
+- [ ] Write docs/architecture.md (syntax layer without Rhino dependency, runner, generator, and how definitions, repeats and group references resolve, and how steps, targets and ownership work)
 - [ ] Document the `.3dm` persistence format (ArchivableDictionary layout and versioning rules)
 - [ ] Add a troubleshooting/FAQ doc (boolean failed, layer color not applied, nothing built)
 - [ ] Write a release checklist for the yak pipeline (test server first, immutable version discipline)
@@ -103,6 +123,8 @@ The syntax layer has no Rhino dependency and can be tested with plain .NET.
 - [x] UI suite driving the panel by control id, click and keystroke
 - [x] Fixtures, goldens and in-Rhino cases for fillets, pipes, nested layers, arithmetic and action sequences
 - [x] Fixtures, goldens and in-Rhino cases for nested containers, reused headers, group references, world coordinates, squares, through cuts and select
+- [x] Fixtures, goldens and in-Rhino cases for steps, targets and selections, and UI cases for the menu items, Wrap Words and line numbers
+- [x] An on-request `progress` suite that compares `tests/progress.md` with `tests/progress.3dm`
 
 ### Improve Tests
 
@@ -120,6 +142,9 @@ The syntax layer has no Rhino dependency and can be tested with plain .NET.
 - [ ] Persistence: write a `.3dm`, reopen it headless, and assert the embedded list came back
 - [ ] Grouped parts that survive a run land in a Rhino group with the right name
 - [ ] Large list performance, for example five hundred parts in one element
+- [ ] `offset` on the front and right orientations, and an offset that comes back as several curves
+- [ ] Steps on locked and hidden objects (not found), and a list with steps run twice
+- [ ] Line numbers after a change of font size or display scaling
 
 ## Packaging and Release
 

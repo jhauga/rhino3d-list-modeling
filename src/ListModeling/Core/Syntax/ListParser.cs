@@ -30,6 +30,11 @@ namespace ListModeling.Core.Syntax
   /// parts of an earlier group again. A rebuilt part keeps the values of the headers it was
   /// first written under; the headers around the repeat fill in only what those leave out.
   ///
+  /// A header with no deeper header under it is a sequence when its own lines hold steps
+  /// (see ReadSteps): actions that run in order on what is selected, with select,
+  /// deselect and value lines among them. Steps are never passed down from a container,
+  /// the element defaults or a group reference.
+  ///
   /// filletEdge, radius (pipe stations) and LayerName (nested layers) read their nested
   /// lines. Under any other property, nested lines are applied as ordinary properties,
   /// so a list indented unevenly still reads the way it always did.
@@ -300,18 +305,27 @@ namespace ListModeling.Core.Syntax
         while (places.Count > 0 && places[places.Count - 1].Level >= level)
         {
           var place = places[places.Count - 1];
-          if (!place.HasDeeper)
+          if (place.HasDeeper)
+          {
+            // Steps run where they are written and are never passed down.
+            WarnAboutStepsNotRun(OwnLinesOf(place), StepsOnContainer, doc.Diagnostics);
+          }
+          else
           {
             switch (place.Kind)
             {
               case PlaceKind.GroupRef:
+                WarnAboutStepsNotRun(place.SiteLines, StepsOnGroupReference, doc.Diagnostics);
                 BuildReference(place);
                 break;
 
               case PlaceKind.Continue:
                 if (place.LineCount > 0)
+                {
+                  WarnAboutStepsNotRun(OwnLinesOf(place), StepsOnContainer, doc.Diagnostics);
                   doc.Diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, place.Line,
                     $"Header '{place.Definition.Name}' (line {place.Line}) continues the container from line {place.Definition.Line}; its lines apply from here on and nothing is built from it here."));
+                }
                 else
                   foreach (var part in place.Definition.Parts())
                     Build(part, place, true, GroupIndex(part));
@@ -323,6 +337,9 @@ namespace ListModeling.Core.Syntax
                 else
                 {
                   Commit(place);
+                  // Value lines are checked once here, where the header is written,
+                  // however many times its part is built.
+                  doc.Diagnostics.AddRange(ScanSteps(place.Definition.Lines, null).Warnings);
                   Build(place.Definition, place, false, null);
                 }
                 break;
@@ -336,6 +353,7 @@ namespace ListModeling.Core.Syntax
       // references by name, and each definition is built once per element.
       void FinishElement()
       {
+        WarnAboutStepsNotRun(elementDefaults, StepsOnContainer, doc.Diagnostics);
         CloseFrom(0);
         var first = new Dictionary<Definition, Candidate>();
         foreach (var candidate in candidates)
@@ -500,9 +518,30 @@ namespace ListModeling.Core.Syntax
       return doc;
     }
 
-    /// <summary>How header names are compared: trimmed, case insensitive, runs of spaces as one.</summary>
-    static string NameKey(string name)
+    /// <summary>The lines written under this header itself: all of a new definition's, or those a repeat added.</summary>
+    static IEnumerable<Node> OwnLinesOf(Place place)
+    {
+      if (place.Kind == PlaceKind.GroupRef)
+        return place.SiteLines;
+      if (place.Kind == PlaceKind.Continue)
+        return place.Definition.Lines.Skip(Math.Max(0, place.Definition.Lines.Count - place.LineCount));
+      return place.Definition.Lines;
+    }
+
+    /// <summary>
+    /// How header names are compared: trimmed, case insensitive, runs of spaces as one.
+    /// The runner matches step targets to headers the same way.
+    /// </summary>
+    internal static string NameKey(string name)
       => Regex.Replace((name ?? string.Empty).Trim(), @"\s+", " ").ToLowerInvariant();
+
+    /// <summary>Reads text the way a LayerName value is read, into a "Parent::Child" path; null when it names no layer.</summary>
+    internal static string LayerPathOf(string text)
+    {
+      var segments = new List<string>();
+      AddLayerSegments(segments, text);
+      return segments.Count == 0 ? null : string.Join("::", segments);
+    }
 
     /// <summary>The name a grouped part takes: that of the nearest header above it that is not a group.</summary>
     static string NearestName(Definition definition)
@@ -540,14 +579,46 @@ namespace ListModeling.Core.Syntax
       }
 
       var baseline = part.Clone();
+      string inheritedLayer = null;
       foreach (var level in chain)
+      {
+        // The layer a valueless select reads when the header's own lines name none.
+        if (level == definition)
+          inheritedLayer = part.LayerName;
         foreach (var node in level.Lines)
           ApplyProperty(part, node, muted, baseline);
+      }
       foreach (var node in siteLines)
         ApplyProperty(part, node, muted, baseline);
 
       ResolveCoordinates(part);
+      FillPath(part, definition, place, openPlaces, chain);
+      ReadSteps(part, definition.Lines, inheritedLayer);
       return part;
+    }
+
+    /// <summary>
+    /// The names that own what a part builds: the open headers above the place it is built,
+    /// then the headers it was written under, outermost first, each name once.
+    /// </summary>
+    static void FillPath(Part part, Definition definition, Place place, List<Place> openPlaces, List<Definition> chain)
+    {
+      var seen = new HashSet<string>(StringComparer.Ordinal);
+      void Add(string name)
+      {
+        if (!string.IsNullOrWhiteSpace(name) && seen.Add(NameKey(name)))
+          part.Path.Add(name.Trim());
+      }
+
+      foreach (var above in openPlaces)
+      {
+        if (above == place)
+          break;
+        if (above.Definition != null)
+          Add(above.Definition.Name);
+      }
+      foreach (var level in chain)
+        Add(level.Name);
     }
 
     static bool IsComment(string trimmed)
@@ -755,6 +826,13 @@ namespace ListModeling.Core.Syntax
         case "curve":
         case "rail":
           part.CurveName = value.Length == 0 ? null : value;
+          break;
+
+        case "select":
+        case "deselect":
+        case "value":
+          // Steps are read from a header's own lines once every line is applied (see
+          // ReadSteps); on the part itself these lines change nothing.
           break;
 
         default:
@@ -1403,11 +1481,18 @@ namespace ListModeling.Core.Syntax
 
     static void ApplyActions(Part part, string value, int line, List<Diagnostic> diagnostics)
     {
+      var words = StepWords.Split(value);
+
+      // A line of words that exist only as steps (copy, paste, deselectAll, ...) leaves
+      // the part as it is: steps are read from a header's own lines, and a container
+      // never passes them down.
+      if (words.Count > 0 && words.All(StepWords.IsStepOnly))
+        return;
+
       part.Actions.Clear();
-      var tokens = value.Trim().Trim('[', ']').Split(new[] { ',', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries);
-      foreach (var token in tokens)
+      foreach (var token in words)
       {
-        switch (token.Trim().ToLowerInvariant())
+        switch (StepWords.Key(token))
         {
           case "extrude":
           case "solid":
@@ -1441,7 +1526,14 @@ namespace ListModeling.Core.Syntax
             part.Actions.Add(PartAction.Curve);
             break;
           default:
-            diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, line, $"Unknown action '{token}' ignored."));
+            // A step word is read by ReadSteps and adds nothing to the part's actions.
+            if (StepWords.IsStepOnly(token))
+              break;
+            var closest = StepWords.Closest(token);
+            diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, line,
+              closest == null
+                ? $"Unknown action '{token}' ignored."
+                : $"Unknown action '{token}' ignored. Did you mean '{closest}'?"));
             break;
         }
       }
@@ -1486,6 +1578,437 @@ namespace ListModeling.Core.Syntax
       }
     }
 
+    // ---- Steps -------------------------------------------------------------------------
+
+    /// <summary>Normalized keys ApplyProperty knows whose nested lines it applies as properties.</summary>
+    static readonly HashSet<string> SingleValueKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+      "layercolor", "color", "colour", "orientation", "shape", "sides", "height", "width",
+      "depth", "thickness", "distance", "length", "offset", "elevation", "position", "pos",
+      "center", "centre", "xposition", "xpos", "yposition", "ypos", "zposition", "zpos",
+      "actions", "action", "curve", "rail", "select", "deselect", "value",
+    };
+
+    /// <summary>Keys that give a part a shape, a size or a position, which steps do not use.</summary>
+    static readonly HashSet<string> ShapeKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+      "shape", "sides", "height", "width", "radius", "r", "offset", "elevation", "position", "pos",
+      "center", "centre", "xposition", "xpos", "yposition", "ypos", "zposition", "zpos",
+    };
+
+    /// <summary>
+    /// The property lines ApplyProperty visits, in the order it visits them: each line,
+    /// then the nested lines it applies as properties. Nested lines a property reads for
+    /// itself (fillet selections, radius stations, layer segments, unknown keys) are left out.
+    /// </summary>
+    static IEnumerable<Node> VisitedLines(IEnumerable<Node> nodes)
+    {
+      foreach (var node in nodes)
+      {
+        if (!IsPropertyKey(node.Key))
+          continue;
+        yield return node;
+        foreach (var child in VisitedChildren(node))
+          yield return child;
+      }
+    }
+
+    static IEnumerable<Node> VisitedChildren(Node node)
+    {
+      var key = NormalizeKey(node.Key);
+      switch (key)
+      {
+        case "layername":
+        case "layer":
+        {
+          // At every level of a nested layer path, the lines with a key are properties.
+          var level = node;
+          while (level != null)
+          {
+            Node next = null;
+            foreach (var child in level.Children)
+            {
+              if (child.Key != null)
+              {
+                foreach (var visited in VisitedLines(new[] { child }))
+                  yield return visited;
+              }
+              else if (next == null)
+                next = child;
+            }
+            level = next;
+          }
+          yield break;
+        }
+
+        case "radius":
+        case "r":
+          if (node.Value.Length > 0)
+            foreach (var visited in VisitedLines(node.Children))
+              yield return visited;
+          yield break;
+
+        default:
+          if (SingleValueKeys.Contains(key))
+            foreach (var visited in VisitedLines(node.Children))
+              yield return visited;
+          yield break;
+      }
+    }
+
+    /// <summary>A step as the scan meets it, before its value is known.</summary>
+    sealed class PendingStep
+    {
+      public PendingStep(StepKind kind, int line, string word, string layerAbove)
+      {
+        Kind = kind;
+        Line = line;
+        Word = word;
+        LayerAbove = layerAbove;
+      }
+
+      public StepKind Kind { get; }
+      public int Line { get; }
+      public string Word { get; }
+      /// <summary>The nearest LayerName above the step under the same header.</summary>
+      public string LayerAbove { get; }
+      public string Value { get; set; }
+    }
+
+    /// <summary>What a header's own lines say about steps.</summary>
+    sealed class StepScan
+    {
+      public List<PendingStep> Steps { get; } = new List<PendingStep>();
+      /// <summary>Words that build a part, met among the action words, with their lines.</summary>
+      public List<KeyValuePair<int, string>> PartWords { get; } = new List<KeyValuePair<int, string>>();
+      public List<Diagnostic> Warnings { get; } = new List<Diagnostic>();
+      /// <summary>actions lines that have a value.</summary>
+      public int ActionLines { get; set; }
+      /// <summary>True when the only actions line is exactly "select".</summary>
+      public bool OnlySelectAction { get; set; }
+      public bool StepOnlyWord { get; set; }
+      public int SelectLines { get; set; }
+      public int DeselectLines { get; set; }
+      public int ValueLines { get; set; }
+      /// <summary>A value line under a step other than select.</summary>
+      public bool ValueUnderOtherStep { get; set; }
+      /// <summary>The first actions line with a word that could not be read; 0 for none.</summary>
+      public int UnreadableLine { get; set; }
+      public bool ShapeOrPosition { get; set; }
+      /// <summary>The first select, deselect or value line, or step-only word; 0 for none.</summary>
+      public int FirstStepLine { get; set; }
+
+      public bool HasStepLines => FirstStepLine > 0;
+
+      public void NoteStepLine(int line)
+      {
+        if (FirstStepLine == 0)
+          FirstStepLine = line;
+      }
+    }
+
+    /// <summary>
+    /// Walks a header's own lines in the order ApplyProperty visits them and collects the
+    /// steps, what decides how the header is read, and the warnings its value lines give.
+    /// </summary>
+    static StepScan ScanSteps(IEnumerable<Node> ownLines, string inheritedLayer)
+    {
+      var scan = new StepScan();
+      var muted = new List<Diagnostic>();
+      string layer = inheritedLayer;
+      PendingStep last = null;
+      string lastPartWord = null;
+      bool lastUnreadable = false;
+
+      foreach (var node in VisitedLines(ownLines))
+      {
+        var key = NormalizeKey(node.Key);
+        int line = node.Line;
+
+        if (ShapeKeys.Contains(key) && (node.Value.Length > 0 || node.Children.Count > 0))
+          scan.ShapeOrPosition = true;
+
+        switch (key)
+        {
+          case "layername":
+          case "layer":
+            layer = ReadLayerPath(new Part("scan", line), node, muted, null) ?? inheritedLayer;
+            break;
+
+          case "actions":
+          case "action":
+          {
+            if (node.Value.Length == 0)
+              break;
+            scan.ActionLines++;
+            var words = StepWords.Split(node.Value);
+            scan.OnlySelectAction = scan.ActionLines == 1 && words.Count == 1
+              && StepWords.TryGetKind(words[0], out var only) && only == StepKind.Select;
+            foreach (var word in words)
+            {
+              if (StepWords.TryGetKind(word, out var kind))
+              {
+                last = new PendingStep(kind, line, word, layer);
+                scan.Steps.Add(last);
+                lastPartWord = null;
+                lastUnreadable = false;
+                if (StepWords.IsStepOnly(kind))
+                {
+                  scan.StepOnlyWord = true;
+                  scan.NoteStepLine(line);
+                }
+              }
+              else if (StepWords.BuildsAPart(word))
+              {
+                scan.PartWords.Add(new KeyValuePair<int, string>(line, word));
+                last = null;
+                lastPartWord = word;
+                lastUnreadable = false;
+              }
+              else
+              {
+                if (scan.UnreadableLine == 0)
+                  scan.UnreadableLine = line;
+                last = null;
+                lastPartWord = null;
+                lastUnreadable = true;
+              }
+            }
+            break;
+          }
+
+          case "select":
+          case "deselect":
+          {
+            bool select = key == "select";
+            if (select) scan.SelectLines++; else scan.DeselectLines++;
+            scan.NoteStepLine(line);
+            last = new PendingStep(select ? StepKind.Select : StepKind.Deselect, line, node.Key.Trim(), layer);
+            if (node.Value.Length > 0)
+              last.Value = node.Value;
+            scan.Steps.Add(last);
+            lastPartWord = null;
+            lastUnreadable = false;
+            break;
+          }
+
+          case "value":
+            scan.ValueLines++;
+            scan.NoteStepLine(line);
+            AttachValue(scan, node, last, lastPartWord, lastUnreadable);
+            break;
+        }
+      }
+      return scan;
+    }
+
+    /// <summary>Gives a value line to the nearest step above it, or says why it is ignored.</summary>
+    static void AttachValue(StepScan scan, Node node, PendingStep last, string lastPartWord, bool lastUnreadable)
+    {
+      if (node.Value.Length == 0)
+        return;
+      string written = $"'value: {node.Value}'";
+      int line = node.Line;
+
+      if (last == null)
+      {
+        string reason = lastPartWord != null ? $"'{lastPartWord}' takes no value; {written} is ignored."
+          : lastUnreadable ? $"The action above {written} could not be read; the value is ignored."
+          : $"A value line needs an action above it; {written} is ignored.";
+        scan.Warnings.Add(new Diagnostic(DiagnosticLevel.Warning, line, reason));
+        return;
+      }
+
+      if (last.Kind != StepKind.Select)
+        scan.ValueUnderOtherStep = true;
+
+      if (!TakesValue(last.Kind))
+      {
+        scan.Warnings.Add(new Diagnostic(DiagnosticLevel.Warning, line,
+          $"'{StepWords.Spelling(last.Kind)}' takes no value; {written} is ignored."));
+        return;
+      }
+      if (last.Value != null)
+      {
+        scan.Warnings.Add(new Diagnostic(DiagnosticLevel.Warning, line,
+          $"'{StepWords.Spelling(last.Kind)}' already has a value; {written} is ignored."));
+        return;
+      }
+
+      last.Value = node.Value;
+      if (last.Kind == StepKind.Offset || last.Kind == StepKind.Extrude)
+      {
+        if (Units.TryParse(node.Value, out _, out var unknownUnit, out _) && unknownUnit != null)
+          scan.Warnings.Add(new Diagnostic(DiagnosticLevel.Warning, line,
+            $"Unknown unit '{unknownUnit}' on the distance for '{StepWords.Spelling(last.Kind)}'; using model units."));
+      }
+    }
+
+    static bool TakesValue(StepKind kind)
+    {
+      switch (kind)
+      {
+        case StepKind.DeselectAll:
+        case StepKind.Copy:
+        case StepKind.Paste:
+        case StepKind.Delete:
+          return false;
+        default:
+          return true;
+      }
+    }
+
+    /// <summary>
+    /// Decides what a header with no deeper header under it is, from its own lines:
+    ///
+    ///   a sequence    when its lines hold two actions lines with a value, a word that
+    ///                 exists only as a step, a deselect line, a select line beside an
+    ///                 actions line or a second select line, or a value under a step other
+    ///                 than select;
+    ///   a select part when it has one select line, or its one actions line is select;
+    ///   a part        otherwise, exactly as before.
+    ///
+    /// A sequence gets its steps and loses its actions. A select part gets its target: what
+    /// it names, its own name when it names nothing and has no LayerName, or null to read
+    /// its LayerName.
+    /// </summary>
+    static void ReadSteps(Part part, List<Node> ownLines, string inheritedLayer)
+    {
+      var scan = ScanSteps(ownLines, inheritedLayer);
+
+      bool sequence = scan.ActionLines >= 2
+        || scan.StepOnlyWord
+        || scan.DeselectLines > 0
+        || (scan.SelectLines > 0 && scan.ActionLines > 0)
+        || scan.SelectLines > 1
+        || scan.ValueUnderOtherStep;
+
+      if (sequence)
+      {
+        part.IsSequence = true;
+        part.Actions.Clear();
+        part.SelectTarget = null;
+        part.StepsIgnoreShape = scan.ShapeOrPosition;
+        part.UnreadableActionLine = scan.UnreadableLine;
+        part.Steps.Clear();
+        foreach (var pending in scan.Steps)
+          part.Steps.Add(FinishStep(part, pending));
+        part.StepPartWords.Clear();
+        part.StepPartWords.AddRange(scan.PartWords);
+        return;
+      }
+
+      bool selectPart = (scan.SelectLines == 1 && scan.ActionLines == 0)
+        || (scan.SelectLines == 0 && scan.ActionLines == 1 && scan.OnlySelectAction);
+      if (selectPart)
+      {
+        var pending = scan.Steps.First(s => s.Kind == StepKind.Select);
+        if (scan.SelectLines == 1)
+        {
+          part.Actions.Clear();
+          part.Actions.Add(PartAction.Select);
+        }
+        if (pending.Value != null)
+          part.SelectTarget = StepTarget.Parse(pending.Value);
+      }
+
+      if (part.Generator == PartGenerator.Select && part.SelectTarget == null && string.IsNullOrWhiteSpace(part.LayerName))
+        part.SelectTarget = StepTarget.FromOwnName(part.Name);
+    }
+
+    /// <summary>Gives a step its target, distance or layer, or the reason it cannot run.</summary>
+    static Step FinishStep(Part part, PendingStep pending)
+    {
+      var step = new Step(pending.Kind, pending.Line, pending.Word);
+      var spelling = StepWords.Spelling(pending.Kind);
+      var value = pending.Value;
+
+      switch (pending.Kind)
+      {
+        case StepKind.Select:
+        case StepKind.Deselect:
+          if (value != null)
+          {
+            step.Target = StepTarget.Parse(value);
+            step.Problem = step.Target.Problem;
+          }
+          else if (!string.IsNullOrWhiteSpace(pending.LayerAbove))
+            step.Target = StepTarget.FromLayer(pending.LayerAbove);
+          else if (pending.Kind == StepKind.Select)
+            step.Target = StepTarget.FromOwnName(part.Name);
+          else
+            step.Problem = $"'{spelling}' needs a value, the objects to deselect.";
+          break;
+
+        case StepKind.BooleanDifference:
+          if (value != null)
+          {
+            step.Target = StepTarget.Parse(value);
+            step.Problem = step.Target.Problem;
+          }
+          else
+            step.Problem = $"'{spelling}' needs a value, the solids to cut with.";
+          break;
+
+        case StepKind.ChangeLayer:
+          step.LayerPath = value == null ? null : LayerPathOf(value);
+          if (step.LayerPath == null)
+            step.Problem = $"'{spelling}' needs a value, the layer to move to.";
+          break;
+
+        case StepKind.Offset:
+          if (value == null)
+            step.Problem = $"'{spelling}' needs a value, the distance to offset by.";
+          else
+            ReadDistance(step, value, spelling);
+          break;
+
+        case StepKind.Extrude:
+          if (part.DepthThrough)
+            step.Problem = $"'{spelling}' cannot use depth 'through'; give it a distance.";
+          else if (value != null)
+            ReadDistance(step, value, spelling);
+          else if (part.Depth.HasValue)
+          {
+            step.Distance = part.Depth;
+            if (part.Depth.Value.Value == 0)
+              step.Problem = $"'{spelling}' needs a distance other than zero.";
+          }
+          else
+            step.Problem = $"'{spelling}' needs a value or a depth, the distance to extrude.";
+          break;
+      }
+      return step;
+    }
+
+    static void ReadDistance(Step step, string value, string spelling)
+    {
+      if (!Units.TryParse(value, out var measure, out _, out var error))
+      {
+        step.Problem = error == null
+          ? $"cannot read the distance '{value}' for '{spelling}'."
+          : $"cannot read the distance '{value}' for '{spelling}': {error}.";
+        return;
+      }
+      step.Distance = measure;
+      if (measure.Value == 0)
+        step.Problem = $"'{spelling}' needs a distance other than zero.";
+    }
+
+    /// <summary>
+    /// Warns once when a container, the element defaults or a group reference holds
+    /// select, deselect or value lines or a word that exists only as a step.
+    /// </summary>
+    static void WarnAboutStepsNotRun(IEnumerable<Node> lines, string message, List<Diagnostic> diagnostics)
+    {
+      var scan = ScanSteps(lines, null);
+      if (scan.HasStepLines)
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Warning, scan.FirstStepLine, message));
+    }
+
+    const string StepsOnContainer = "Steps written on a container are not passed down; write them under the header that runs them.";
+    const string StepsOnGroupReference = "Steps cannot be written under a group reference; they are ignored.";
+
     // ---- Document checks -------------------------------------------------------------
 
     static void Validate(ListDocument doc)
@@ -1506,6 +2029,12 @@ namespace ListModeling.Core.Syntax
 
     static void ValidatePart(Part part, ElementFamily family, List<Diagnostic> diagnostics)
     {
+      if (part.IsSequence)
+      {
+        ValidateSequence(part, diagnostics);
+        return;
+      }
+
       if (part.Actions.Count == 0)
         part.Actions.Add(PartAction.Extrude);
 
@@ -1604,17 +2133,50 @@ namespace ListModeling.Core.Syntax
     }
 
     /// <summary>
-    /// A select part is the solids already on its layer, kept as the solids its element
-    /// cuts. It needs the layer and nothing else; cutting or merging selected solids, and
-    /// selecting in union or surface elements, are planned.
+    /// A sequence builds nothing from its shape, so its dimensions are not checked. Each
+    /// step that cannot be read is an error on its own line, and any of them, or an action
+    /// word that could not be read, means none of the header's steps run: skipping only
+    /// the bad step would leave the selection in a state the list did not ask for.
     /// </summary>
-    static void ValidateSelect(Part part, ElementFamily family, List<Diagnostic> diagnostics)
+    static void ValidateSequence(Part part, List<Diagnostic> diagnostics)
     {
-      if (string.IsNullOrWhiteSpace(part.LayerName))
+      var problems = new List<KeyValuePair<int, string>>();
+      foreach (var word in part.StepPartWords)
+        problems.Add(new KeyValuePair<int, string>(word.Key, $"'{word.Value}' builds a part and cannot be a step."));
+      foreach (var step in part.Steps)
+        if (step.Problem != null)
+          problems.Add(new KeyValuePair<int, string>(step.Line, step.Problem));
+
+      foreach (var problem in problems.OrderBy(p => p.Key))
+      {
+        part.HasError = true;
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, problem.Key, $"Part '{part.DisplayName}': {problem.Value}"));
+      }
+
+      if (part.UnreadableActionLine > 0)
       {
         part.HasError = true;
         diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
-          $"Part '{part.DisplayName}': select needs a LayerName naming the layer to read."));
+          $"Part '{part.DisplayName}': an action on line {part.UnreadableActionLine} could not be read, so none of its steps run."));
+      }
+
+      if (part.StepsIgnoreShape)
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Info, part.Line,
+          $"Part '{part.DisplayName}': steps act on what is selected; its shape, dimensions and position are not used."));
+    }
+
+    /// <summary>
+    /// A select part is the objects it names, the objects on its layer, or the objects of
+    /// its own name, kept as the solids its element cuts. Cutting or merging selected
+    /// solids, and selecting in union or surface elements, are planned.
+    /// </summary>
+    static void ValidateSelect(Part part, ElementFamily family, List<Diagnostic> diagnostics)
+    {
+      if (part.SelectTarget?.Problem != null)
+      {
+        part.HasError = true;
+        diagnostics.Add(new Diagnostic(DiagnosticLevel.Error, part.Line,
+          $"Part '{part.DisplayName}': {part.SelectTarget.Problem}"));
       }
 
       if (part.Role != PartRole.Keep)

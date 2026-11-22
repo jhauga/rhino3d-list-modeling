@@ -1,0 +1,98 @@
+[
+ {
+  "bbox": [
+   1204.5, 
+   -0.5, 
+   0.0, 
+   1205.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "by-container", 
+  "name": "Pair Left", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1209.5, 
+   -0.5, 
+   0.0, 
+   1210.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "kept", 
+  "name": "Pair Right", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1219.5, 
+   -0.5, 
+   0.0, 
+   1220.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "by-index", 
+  "name": "Row", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1214.5, 
+   -0.5, 
+   0.0, 
+   1215.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "kept", 
+  "name": "Row", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1224.5, 
+   -0.5, 
+   0.0, 
+   1225.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 1, 
+  "layer": "kept", 
+  "name": "Row", 
+  "solid": true, 
+  "type": "Brep"
+ }, 
+ {
+  "bbox": [
+   1199.5, 
+   -0.5, 
+   0.0, 
+   1200.5, 
+   0.5, 
+   1.0
+  ], 
+  "faces": 6, 
+  "groups": 0, 
+  "layer": "own-name", 
+  "name": "Solo", 
+  "solid": true, 
+  "type": "Brep"
+ }
+]

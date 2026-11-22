@@ -321,19 +321,9 @@ namespace ListModeling.Commands
           objects.Add(obj);
       }
 
-      var list = SelectionListGenerator.Generate(doc, objects);
-      foreach (var d in list.Diagnostics)
-        RhinoApp.WriteLine("List Modeling: " + d);
-
-      if (list.Elements.Count == 0)
+      var text = SelectionListGenerator.AppendToEmbeddedList(doc, objects, echo: true);
+      if (text.Length == 0)
         return Result.Nothing;
-
-      var text = ListWriter.Write(list);
-      ListStore.AppendText(doc.RuntimeSerialNumber, text);
-
-      foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
-        RhinoApp.WriteLine(line);
-      RhinoApp.WriteLine($"List Modeling: described {list.AllParts.Count()} part(s); added to the embedded list.");
 
       if (interactive)
         Panels.OpenPanel(Views.ListModelingPanel.PanelId);

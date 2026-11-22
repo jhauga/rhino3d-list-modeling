@@ -61,3 +61,19 @@
 ## Missing Group
 
 ### group:nowhere[0]
+
+## Misspelled Step
+
+* select: Good Part
+* actions: deselctAll
+
+## Offset Without Value
+
+* select: Good Part
+* actions: offset
+
+## Value Without Action
+
+* value: 3
+* actions: copy
+* actions: paste

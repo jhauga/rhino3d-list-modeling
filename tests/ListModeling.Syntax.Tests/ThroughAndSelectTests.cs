@@ -77,11 +77,16 @@ namespace ListModeling.Syntax.Tests
     }
 
     [Fact]
-    public void ASelectPartWithoutALayerIsAnError()
+    public void ASelectPartWithoutALayerSelectsByItsOwnName()
     {
       var doc = Parse("- actions: select\n");
-      Assert.Contains(doc.Diagnostics, d => d.Level == DiagnosticLevel.Error && d.Message.Contains("select needs a LayerName"));
-      Assert.True(Assert.Single(doc.AllParts).HasError);
+      Assert.Empty(doc.Diagnostics);
+      var part = Assert.Single(doc.AllParts);
+      Assert.False(part.HasError);
+      Assert.Equal(PartGenerator.Select, part.Generator);
+      Assert.NotNull(part.SelectTarget);
+      Assert.True(part.SelectTarget.OwnName);
+      Assert.Equal("Part", part.SelectTarget.Name);
     }
 
     [Theory]

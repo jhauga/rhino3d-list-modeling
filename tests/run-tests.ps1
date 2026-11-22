@@ -3,21 +3,26 @@
     Runs the List Modeling test suites.
 
 .DESCRIPTION
-    Four suites, in the order they should fail in:
+    Four everyday suites, in the order they should fail in, and one on request:
 
       unit        xUnit over the syntax layer, no Rhino needed
       smoke       the plugin loads, registers and does its headline actions
       regression  fixture geometry against hand worked numbers and golden files
       ui          the panel driven by control id, click and keystroke
+      progress    tests/progress.md against the model in tests/progress.3dm
 
-    The unit suite runs with dotnet test. The other three run inside Rhino,
-    which is launched with a script that writes tests/artifacts/rhino-report.json.
-    Rhino's own exit code says nothing about the results, so this script reads
-    that report.
+    The unit suite runs with dotnet test. The others run inside Rhino, which is
+    launched with a script that writes tests/artifacts/rhino-report.json. Rhino's
+    own exit code says nothing about the results, so this script reads that
+    report.
+
+    The progress suite runs only when it is named. Its model is edited by hand
+    between releases, so a moved model should not fail the everyday run.
 
 .PARAMETER Suite
-    all (default), unit, rhino, smoke, regression, or ui. Comma separated values
-    are accepted, for example "unit,ui".
+    all (default), unit, rhino, smoke, regression, ui, or progress. Comma
+    separated values are accepted, for example "unit,ui". Neither all nor rhino
+    includes progress.
 
 .PARAMETER UpdateGolden
     Rewrites the golden baselines instead of comparing against them. Review the
@@ -33,6 +38,7 @@
     powershell -File tests\run-tests.ps1
     powershell -File tests\run-tests.ps1 -Suite unit
     powershell -File tests\run-tests.ps1 -Suite ui -SkipBuild
+    powershell -File tests\run-tests.ps1 -Suite progress
 #>
 [CmdletBinding()]
 param(
@@ -59,8 +65,10 @@ $requested = @()
 foreach ($name in $Suite.Split(",")) { $requested += $name.Trim().ToLower() }
 
 function Wants([string] $name) {
-    if ($requested -contains "all") { return $true }
     if ($requested -contains $name) { return $true }
+    # Only a request by name runs the progress suite.
+    if ($name -eq "progress") { return $false }
+    if ($requested -contains "all") { return $true }
     if ($requested -contains "rhino") {
         if ($name -eq "smoke" -or $name -eq "regression" -or $name -eq "ui") { return $true }
     }
@@ -87,7 +95,7 @@ if (Wants "unit") {
 # ---- in-Rhino suites --------------------------------------------------------
 
 $rhinoSuites = @()
-foreach ($name in @("smoke", "regression", "ui")) {
+foreach ($name in @("smoke", "regression", "ui", "progress")) {
     if (Wants $name) { $rhinoSuites += $name }
 }
 
@@ -171,7 +179,7 @@ if ($rhinoSuites.Count -gt 0) {
 
 Write-Host ""
 if (-not $ranAnything) {
-    Write-Host "No suite matched -Suite '$Suite'. Use all, unit, rhino, smoke, regression or ui." -ForegroundColor Yellow
+    Write-Host "No suite matched -Suite '$Suite'. Use all, unit, rhino, smoke, regression, ui or progress." -ForegroundColor Yellow
     exit 1
 }
 if ($unitOk -and $rhinoOk) {

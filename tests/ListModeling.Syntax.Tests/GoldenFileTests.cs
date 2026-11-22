@@ -92,24 +92,30 @@ namespace ListModeling.Syntax.Tests
       Assert.Contains(errors, d => d.Message.Contains("Cannot read height"));
       Assert.Contains(errors, d => d.Message.Contains("zero or negative"));
       Assert.Contains(errors, d => d.Message.Contains("'through' only applies to subtract parts"));
-      Assert.Contains(errors, d => d.Message.Contains("select needs a LayerName"));
       Assert.Contains(errors, d => d.Message.Contains("No group 'nowhere'"));
+      Assert.Contains(errors, d => d.Message.Contains("Part 'Misspelled Step': an action on line") && d.Message.Contains("could not be read, so none of its steps run"));
+      Assert.Contains(errors, d => d.Message.Contains("Part 'Offset Without Value': 'offset' needs a value"));
+      Assert.DoesNotContain(errors, d => d.Message.Contains("Select Without Layer"));
 
       // Warnings mean a value was resolved to a default and the part is still built.
       Assert.Contains(warnings, d => d.Message.Contains("two values"));
       Assert.Contains(warnings, d => d.Message.Contains("Unknown element type"));
       Assert.Contains(warnings, d => d.Message.Contains("Unknown orientation"));
       Assert.Contains(warnings, d => d.Message.Contains("Unknown shape"));
-      Assert.Contains(warnings, d => d.Message.Contains("Unknown action"));
+      Assert.Contains(warnings, d => d.Message == "Unknown action 'sculpt' ignored.");
+      Assert.Contains(warnings, d => d.Message == "Unknown action 'deselctAll' ignored. Did you mean 'deselectAll'?");
+      Assert.Contains(warnings, d => d.Message.Contains("A value line needs an action above it"));
 
       // A broken part never takes its neighbors down with it.
       var good = document.AllParts.Single(p => p.Name == "Good Part");
       Assert.True(good.HasAllDimensions);
       Assert.False(good.HasError);
 
-      // Exactly the two parts whose values could all be resolved are buildable.
+      // Four parts have values that could all be resolved. The two good parts build; the
+      // other two fail only when the list runs: the select part finds nothing named after
+      // it, and the sequence's copy finds nothing selected.
       var buildable = document.AllParts.Where(p => !p.HasError).Select(p => p.Name).ToList();
-      Assert.Equal(new[] { "Bad Everything Else", "Good Part" }, buildable);
+      Assert.Equal(new[] { "Bad Everything Else", "Good Part", "Select Without Layer", "Value Without Action" }, buildable);
     }
 
     static void Compare(string goldenName, string actual)
